@@ -1,10 +1,12 @@
-name: Deploy Extension
+name: Build & Verify Release
+
 on:
   push:
     tags:
       - "*"
+
 jobs:
-  publish:
+  build-and-verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,20 +25,33 @@ jobs:
       - name: Install tests deps
         working-directory: ./tests
         run: pnpm install --frozen-lockfile
+      - name: Compile extension host (tsc emits out/ for integration tests)
+        run: pnpm exec tsc -p ./
       - name: Build webview bundle
         working-directory: ./media-src
         run: pnpm build
-      - name: Run security PoCs + integration smoke (publish gate)
+      - name: Run security PoCs + integration smoke (release gate)
         run: pnpm test
-      - name: Publish to Open VSX Registry
-        uses: HaaLeo/publish-vscode-extension@v2
-        id: publishToOpenVSX
+      - name: Package vsix
+        run: pnpm exec vsce package --no-dependencies || npx --yes @vscode/vsce package --no-dependencies
+      - name: Upload vsix artifact
+        uses: actions/upload-artifact@v4
         with:
-          pat: ${{ secrets.OPEN_VSX_TOKEN }}
-      - name: Publish to Visual Studio Marketplace
-        uses: HaaLeo/publish-vscode-extension@v2
-        with:
-          pat: ${{ secrets.VS_MARKETPLACE_TOKEN }}
-          registryUrl: https://marketplace.visualstudio.com
-          extensionFile: ${{ steps.publishToOpenVSX.outputs.vsixPath }}
-          packagePath: ''
+          name: markdown-editor-hardened-vsix
+          path: "*.vsix"
+
+      # 市场发布暂时停用（2026-09-14）：当前仅通过 GitHub Release 分发。
+      # 恢复发布：取消下面两个步骤的注释，并在仓库 Settings → Secrets →
+      # Actions 配置 OPEN_VSX_TOKEN 与 VS_MARKETPLACE_TOKEN。
+      # - name: Publish to Open VSX Registry
+      #   uses: HaaLeo/publish-vscode-extension@v2
+      #   id: publishToOpenVSX
+      #   with:
+      #     pat: ${{ secrets.OPEN_VSX_TOKEN }}
+      # - name: Publish to Visual Studio Marketplace
+      #   uses: HaaLeo/publish-vscode-extension@v2
+      #   with:
+      #     pat: ${{ secrets.VS_MARKETPLACE_TOKEN }}
+      #     registryUrl: https://marketplace.visualstudio.com
+      #     extensionFile: ${{ steps.publishToOpenVSX.outputs.vsixPath }}
+      #     packagePath: ''

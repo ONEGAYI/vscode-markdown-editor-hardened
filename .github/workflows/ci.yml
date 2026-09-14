@@ -34,8 +34,8 @@ jobs:
         working-directory: ./tests
         run: pnpm install --frozen-lockfile
 
-      - name: TypeScript check (extension host)
-        run: pnpm exec tsc --noEmit -p ./
+      - name: Compile extension host (tsc emits out/ for integration tests)
+        run: pnpm exec tsc -p ./
 
       - name: Build webview bundle (esbuild + copy vditor assets)
         working-directory: ./media-src
