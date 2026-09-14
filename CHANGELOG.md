@@ -9,12 +9,33 @@ publishes a new version we re-base and bump the upstream prefix.
 
 ## [Unreleased]
 
-针对上一版"跟进上游移植"代码的审查修复（三轮审查循环：独立审查 →
-独立复核 → 修复发现项）。多数缺陷是上游原样带来的，其余为本 fork
-适配时引入。
+## [0.1.21-hardened.2] — 2026-09-14
+
+修复两个核心缺陷：外部编辑者的改动现在能实时进入已打开的编辑器视
+图；编辑器快捷键不再同时触发 VS Code 自身的键绑定。同时收录上一版
+"跟进上游移植"代码的审查修复（链接双发、SV 查找、页内锚点、白屏
+等，见下方前半部分条目）。
 
 ### 修复
 
+- **外部编辑实时同步**（`0ffa618` + `9306c9d`）：此前两个缺陷叠加
+  导致 Agent 等外部编辑者的改动无法出现在已打开的编辑器里——
+  (a) 本扩展的同步模型使文档几乎总处于"有未保存编辑"状态，而
+  VS Code 在这种状态下对外部写盘完全静默（不重载、不通知），外部
+  修改从此消失；(b) VS Code ≥1.137 中 `applyEdit` 的内容事件与磁
+  盘重载形态完全一致，旧的 isDirty 启发式失效，既漏同步外部修改、
+  又把编辑器自身的编辑误当外部修改回灌（每键一次全文重置）。
+  现改为内容基线比较识别回声，并新增文件监视器兜底：磁盘分叉时提
+  供「Load disk version / Keep my edits」二选一，绝不静默覆盖未保
+  存编辑。该同步链经独立审查加固：批准加载前重读磁盘防止应用陈旧
+  快照、BOM/不可解码内容不误报不污染正文、temp+rename 原子写不漏
+  检、通知不因连续写盘而轰炸、面板关闭后不再出现幽灵通知，并修复
+  EditorPanel 两个 workspace 监听器因传参错误导致的订阅泄漏。
+- **编辑器快捷键不再穿透 VS Code 键绑定**（`0ffa618`）：VS Code 的
+  webview 包装层把每个按键无条件转发给键绑定服务（不区分页面是否
+  已消费），Ctrl+B 加粗的同时会打开侧栏。现对编辑器已消费的修饰组
+  合在转发前截断；普通按键与未消费组合（如 Ctrl+Q）仍透传给
+  VS Code，Ctrl+S 的保存链路不受影响。
 - **点击链接只派发一次**（上游原样）：vditor 的 `link.isOpen` 默认为
   true，其点击处理器调用 `window.open(href)`，且在 `preventDefault()`
   之后不做 `stopPropagation` —— 事件继续冒泡到 document 上的
@@ -61,6 +82,12 @@ publishes a new version we re-base and bump the upstream prefix.
   `line-numbers.js` 注明其 `getValue` 桩的语义边界，避免被当作"行号等于
   源文件行号"的证据。
 - 关键修复经变异测试验证确实可被捕获（回退修复即测试失败）。
+- 新增外部同步与键盘转发的回归测试（`external-sync.js` 25 项：真实
+  编译产物 + 按实测宿主事件形态重放的两条打开路径、回声抑制、
+  watcher 兜底全链含 BOM/原子写/挂起通知/陈旧快照；`keyboard-
+  forwarding.js` 7 项：window 级转发层复现与不过度拦截；`external-
+  sync-webview.js`：webview 接收渲染链路）；另附真实 VS Code 事件形
+  态探针（`tests/vscode-probe/`）。
 
 ## [0.1.21-hardened.1] — 2026-09-14
 
@@ -298,5 +325,6 @@ The currently-published Marketplace version of
 Still vulnerable to all seven audit findings (H1, H2, H3, H4, H5, H6, H9).
 
 <!-- 变更链接 -->
-[Unreleased]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.1.21-hardened.1...HEAD
+[Unreleased]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.1.21-hardened.2...HEAD
+[0.1.21-hardened.2]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.1.21-hardened.1...v0.1.21-hardened.2
 [0.1.21-hardened.1]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/commits/v0.1.21-hardened.1
