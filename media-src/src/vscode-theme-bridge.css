@@ -57,22 +57,61 @@ body,
 }
 
 /* ============================================================
- * Headings — vditor styles h1 + h2 with an underline border
- * by default; align that border to the editor widget border.
- * Other headings inherit text color from .vditor-reset above.
+ * Headings — per-level differentiation, styled after the
+ * Obsidian "Things" theme (github.com/colineckert/obsidian-things):
+ *   H1  foreground color, largest, boldest   (no underline)
+ *   H2  foreground color + 2px bottom border (the theme's signature)
+ *   H3  blue   #2e80f2
+ *   H4  yellow #e5b567
+ *   H5  red    #e83e3e
+ *   H6  muted (descriptionForeground), smallest
+ * Sizes/weights follow Things' defaults (1.7/1.5/1.2/1.1/1/0.9 em,
+ * 700/700/600/500/500/400). The accent hexes are used verbatim in
+ * BOTH light and dark modes by the reference theme; retint via
+ * markdown-editor-hardened.customStylesheet if needed.
  * ============================================================ */
 
-.vditor-reset h1,
-.vditor-reset h2 {
-  border-bottom: 1px solid var(--vscode-editorWidget-border, var(--vscode-editorGroup-border, #444)) !important;
+.vditor-reset h1 {
   color: var(--vscode-editor-foreground, #d4d4d4) !important;
+  font-size: 1.7em !important;
+  font-weight: 700 !important;
+  border-bottom: none !important;
 }
 
-.vditor-reset h3,
-.vditor-reset h4,
-.vditor-reset h5,
-.vditor-reset h6 {
+.vditor-reset h2 {
   color: var(--vscode-editor-foreground, #d4d4d4) !important;
+  font-size: 1.5em !important;
+  font-weight: 700 !important;
+  border-bottom: 2px solid var(--vscode-editorWidget-border, var(--vscode-editorGroup-border, #444)) !important;
+  padding-bottom: 2px !important;
+}
+
+.vditor-reset h3 {
+  color: #2e80f2 !important;
+  font-size: 1.2em !important;
+  font-weight: 600 !important;
+  border-bottom: none !important;
+}
+
+.vditor-reset h4 {
+  color: #e5b567 !important;
+  font-size: 1.1em !important;
+  font-weight: 500 !important;
+  border-bottom: none !important;
+}
+
+.vditor-reset h5 {
+  color: #e83e3e !important;
+  font-size: 1em !important;
+  font-weight: 500 !important;
+  border-bottom: none !important;
+}
+
+.vditor-reset h6 {
+  color: var(--vscode-descriptionForeground, rgba(127, 127, 127, 0.7)) !important;
+  font-size: 0.9em !important;
+  font-weight: 400 !important;
+  border-bottom: none !important;
 }
 
 /* ============================================================

@@ -83,6 +83,24 @@ candidate. All seven findings from the upstream audit are closed.
   for CSP (the inline `<script>` is nonce-gated per-render). Adopts upstream
   PR #157. Credit asalcedo29. (C1.18)
 
+### Fixed
+
+- **Line-number gutter dead outside WYSIWYG mode (the `#` toggle did
+  nothing)**. vditor 3.11 keeps all three mode containers
+  (`.vditor-wysiwyg`, `.vditor-sv`, `.vditor-ir`) in the DOM at once;
+  only the active one renders block children. The gutter script's bare
+  `document.querySelector(...)` always resolved the FIRST container in
+  document order (`.vditor-wysiwyg`), so with a saved mode of `ir` (the
+  pre-fork upstream default, persisted in globalState) or `sv` it
+  measured a hidden empty container, never created `#ln-gutter`, and
+  the toggle button had nothing to show/hide. The script now resolves
+  the ACTIVE mode's container via `vditor.getCurrentMode()` (with a
+  "container that has block children" fallback) and re-arms its
+  scroll/observer hooks when the mode switches. SV (source-split) mode
+  remains without a gutter — it has no block editing surface. Found via
+  a real-stack JSDOM harness (webview bundle + real vditor init);
+  regression-tested in `tests/integration/line-numbers-modes.js`.
+
 ### Renamed / changed
 
 - Extension ID: `zaaack.markdown-editor` → `ocean1.markdown-editor-hardened`
@@ -105,6 +123,13 @@ candidate. All seven findings from the upstream audit are closed.
   Drives the bundled Lute markdown engine with a representative sample;
   asserts 17 render properties (headings, lists, code blocks, tables,
   inline formatting, links, images).
+- 2 integration tests for the line-number gutter:
+  `tests/integration/line-numbers.js` (drives the compiled
+  `lineNumberScript` against a hand-built vditor-shaped DOM; toggle +
+  mapping assertions) and `tests/integration/line-numbers-modes.js`
+  (boots the REAL webview stack — `media/dist/main.js`, real vditor
+  init, `acquireVsCodeApi` stub — in JSDOM and asserts the gutter works
+  in `wysiwyg` AND `ir` modes; SV is documented unsupported).
 - Test runner: `tests/run-all.js` aggregates results, exits non-zero on
   any failure. Invoked via `pnpm test` from the project root.
 
