@@ -3,11 +3,23 @@
 All notable changes to `markdown-editor-hardened` are documented here.
 
 Format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).
-The fork's versioning: upstream's version + `-hardened.<N>` suffix, where N is
-the fork's own counter. We bump `<N>` on each meaningful release; when upstream
-publishes a new version we re-base and bump the upstream prefix.
+Versioning: from the next release on, this fork uses its own independent
+incrementing version line starting at `0.2.0` — plain Marketplace-compatible
+semver, no pre-release suffix. The upstream base of each release is recorded
+in that release's changelog entry (基点对账; the repo already tracks this).
+Earlier releases used `upstream + -hardened.<N>` tags; that suffix collides
+with semver pre-release semantics (the VS Marketplace rejects it) and was
+dropped.
 
 ## [Unreleased]
+
+### 其他改进
+
+- **版本序列切换为独立递增**：下个发布起使用 `0.2.0` 起的独立版本号
+  （Marketplace 兼容的纯 semver，无预发布后缀），上游基点对应关系由
+  各版本段的"基点对账"说明承担。此前 `0.1.21-hardened.N` 式后缀与
+  semver 预发布语义冲突，VS Code 市场拒收（`v0.1.21-hardened.2` 发布
+  时实测），故弃用；已发布的历史 tag 保持原样不变。
 
 ## [0.1.21-hardened.2] — 2026-09-14
 
