@@ -7,10 +7,16 @@ The fork's versioning: upstream's version + `-hardened.<N>` suffix, where N is
 the fork's own counter. We bump `<N>` on each meaningful release; when upstream
 publishes a new version we re-base and bump the upstream prefix.
 
-## [0.1.14-hardened.1] — unreleased
+## [0.1.21-hardened.1] — 2026-09-14
 
-T1 (security hardening) + T2 (polish, CI, docs) complete. First fork release
-candidate. All seven findings from the upstream audit are closed.
+首个正式发布的加固版：关闭上游安全审计全部七项发现，并已同步
+上游 0.1.21 的全部实质修复与功能（合并基点对账至
+upstream main@033c624）。
+
+T1 (security hardening) + T2 (polish, CI, docs) complete. First fork release.
+All seven findings from the upstream audit are closed. All substantive
+upstream fixes and features through upstream 0.1.21 are synced (merge
+base reconciled to upstream main@033c624 via merge -s ours).
 
 ### Security
 
@@ -234,3 +240,6 @@ change.
 The currently-published Marketplace version of
 [`zaaack.markdown-editor`](https://marketplace.visualstudio.com/items?itemName=zaaack.markdown-editor).
 Still vulnerable to all seven audit findings (H1, H2, H3, H4, H5, H6, H9).
+
+<!-- 变更链接 -->
+[0.1.21-hardened.1]: https://github.com/ocean1/vscode-markdown-editor-hardened/commits/v0.1.21-hardened.1

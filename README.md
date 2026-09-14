@@ -6,7 +6,7 @@ A security-hardened fork of [`zaaack/vscode-markdown-editor`](https://github.com
 
 ## What's different from upstream
 
-Seven security findings from a code audit of upstream `0.1.13` / `0.1.14`, all closed. Plus a vditor bump, local Lute bundle, and four merged upstream feature PRs:
+Seven security findings from a code audit of upstream `0.1.13` / `0.1.14`, all closed. Plus a vditor bump, local Lute bundle, and four merged upstream feature PRs. All substantive upstream fixes and features through upstream `0.1.21` are also synced (scroll persistence, find bar, table wrapping, external-change sync, link/anchor fixes — see [CHANGELOG](CHANGELOG.md)):
 
 | Area | Upstream 0.1.13 | This fork |
 |------|-----------------|-----------|
