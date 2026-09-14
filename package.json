@@ -4,7 +4,7 @@
   "icon": "media/logo.png",
   "description": "A security-hardened WYSIWYG editor for markdown. Fork of zaaack.markdown-editor with: enableCommandUris removed (closes RCE via crafted markdown command: URIs), customCss XSS vector removed, localResourceRoots scoped, CSP added, jsdelivr CDN dependency removed (vditor + Lute bundled locally), vditor bumped to 3.11.x.",
   "version": "0.1.21-hardened.1",
-  "publisher": "ocean1",
+  "publisher": "ONEGAYI",
   "private": true,
   "engines": {
     "vscode": "^1.47.0"
@@ -33,7 +33,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/ocean1/vscode-markdown-editor-hardened.git"
+    "url": "https://github.com/ONEGAYI/vscode-markdown-editor-hardened.git"
   },
   "main": "out/extension.js",
   "contributes": {

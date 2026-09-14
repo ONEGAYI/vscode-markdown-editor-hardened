@@ -73,7 +73,7 @@ Each independent fix lands upstream as its own PR. Status TBD as we file them:
 
 ## Disclosure
 
-If you find a new issue, please open a private security advisory on [github.com/ocean1/vscode-markdown-editor-hardened](https://github.com/ocean1/vscode-markdown-editor-hardened/security/advisories/new) rather than a public issue.
+If you find a new issue, please open a private security advisory on [github.com/ONEGAYI/vscode-markdown-editor-hardened](https://github.com/ONEGAYI/vscode-markdown-editor-hardened/security/advisories/new) rather than a public issue.
 
 For issues that also affect upstream, we will coordinate disclosure with [zaaack](https://github.com/zaaack).
 

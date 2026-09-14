@@ -2,7 +2,7 @@
 
 A security-hardened fork of [`zaaack/vscode-markdown-editor`](https://github.com/zaaack/vscode-markdown-editor) — a WYSIWYG markdown editor for VS Code powered by [vditor](https://github.com/Vanessa219/vditor).
 
-[![CI](https://github.com/ocean1/vscode-markdown-editor-hardened/actions/workflows/ci.yml/badge.svg)](https://github.com/ocean1/vscode-markdown-editor-hardened/actions/workflows/ci.yml)
+[![CI](https://github.com/ONEGAYI/vscode-markdown-editor-hardened/actions/workflows/ci.yml/badge.svg)](https://github.com/ONEGAYI/vscode-markdown-editor-hardened/actions/workflows/ci.yml)
 
 ## What's different from upstream
 
@@ -32,7 +32,7 @@ For the version-by-version history, see [`CHANGELOG.md`](CHANGELOG.md).
 This fork is not yet on the VS Code Marketplace. To install locally:
 
 ```bash
-git clone https://github.com/ocean1/vscode-markdown-editor-hardened.git
+git clone https://github.com/ONEGAYI/vscode-markdown-editor-hardened.git
 cd vscode-markdown-editor-hardened
 
 # Install all deps
@@ -57,7 +57,7 @@ If you don't have `vsce` globally, `pnpm exec` finds it via the bundled tooling 
 
 If you were using `zaaack.markdown-editor`:
 
-- **Different extension ID**: `ocean1.markdown-editor-hardened` vs upstream's `zaaack.markdown-editor`. Both can be installed side-by-side; uninstall upstream once you've confirmed the fork works for you.
+- **Different extension ID**: `ONEGAYI.markdown-editor-hardened` vs upstream's `zaaack.markdown-editor`. Both can be installed side-by-side; uninstall upstream once you've confirmed the fork works for you. (This fork continues the hardened line started in `ocean1/vscode-markdown-editor-hardened`; the extension ID changed with the move.)
 - **Settings reset**: keys changed from `markdown-editor.*` to `markdown-editor-hardened.*`. The settings you have are:
   - `markdown-editor-hardened.imageSaveFolder` (same semantics as upstream)
   - `markdown-editor-hardened.useVscodeThemeColor` (same)

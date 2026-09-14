@@ -170,7 +170,8 @@ a drift regression. Suite: 12/12 PASS.
 
 ### Renamed / changed
 
-- Extension ID: `zaaack.markdown-editor` → `ocean1.markdown-editor-hardened`
+- Extension ID: `zaaack.markdown-editor` → `ONEGAYI.markdown-editor-hardened`
+  （加固线始于 ocean1 仓库，随发布身份迁移到 ONEGAYI，扩展 ID 随之变更）
 - Display name: `Markdown Editor` → `Markdown Editor (Hardened)`
 - Command name: `markdown-editor.openEditor` → `markdown-editor-hardened.openEditor`
 - CustomEditor viewType: `markdown-editor.customEditor` → `markdown-editor-hardened.customEditor`
@@ -242,4 +243,4 @@ The currently-published Marketplace version of
 Still vulnerable to all seven audit findings (H1, H2, H3, H4, H5, H6, H9).
 
 <!-- 变更链接 -->
-[0.1.21-hardened.1]: https://github.com/ocean1/vscode-markdown-editor-hardened/commits/v0.1.21-hardened.1
+[0.1.21-hardened.1]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/commits/v0.1.21-hardened.1
