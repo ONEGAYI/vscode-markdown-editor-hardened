@@ -76,8 +76,10 @@ async function boot() {
   window.eval(fs.readFileSync(path.join(VDITOR, 'index.js'), 'utf8'));
   if (typeof window.Vditor === 'undefined') throw new Error('Vditor did not load');
 
+  const hostMessages = [];
   window.acquireVsCodeApi = () => ({
     postMessage(msg) {
+      hostMessages.push(msg);
       if (msg.command === 'ready') {
         setTimeout(() => {
           window.dispatchEvent(new window.MessageEvent('message', {
@@ -107,7 +109,7 @@ async function boot() {
       break;
     }
   }
-  return { window, document, pageErrors, booted };
+  return { window, document, pageErrors, booted, hostMessages };
 }
 
 async function main() {
@@ -118,7 +120,7 @@ async function main() {
   };
 
   console.log('[keyboard-forwarding] booting real webview bundle (wysiwyg)…');
-  const { window, document, booted } = await boot();
+  const { window, document, booted, hostMessages } = await boot();
   add('bundle boots in wysiwyg', booted);
   if (!booted) {
     console.log('[keyboard-forwarding] FAIL — could not boot');
@@ -177,6 +179,17 @@ async function main() {
     const { defaultPrevented } = press({ key: 'q', code: 'KeyQ', ctrlKey: true });
     const leaked = forwardedToWindow.some((f) => f.key === 'q' && f.ctrlKey);
     add('K5: unconsumed Ctrl+Q still reaches the window forwarder', !defaultPrevented && leaked);
+  }
+
+  // K6: Ctrl+S (vditor toolbar ⌘s hotkey → webview 'save' message) — the
+  // guard stops the FORWARD, but the webview save path itself must survive.
+  {
+    hostMessages.length = 0;
+    const { defaultPrevented } = press({ key: 's', code: 'KeyS', ctrlKey: true });
+    const leaked = forwardedToWindow.some((f) => f.key === 's' && f.ctrlKey);
+    add('K6: Ctrl+S consumed, not forwarded, and the save message still fires',
+        defaultPrevented && !leaked && hostMessages.some((m) => m.command === 'save'),
+        `prevented=${defaultPrevented} leaked=${leaked} saveMsg=${hostMessages.some((m) => m.command === 'save')}`);
   }
 
   const failed = checks.filter((c) => !c.pass).length;

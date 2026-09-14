@@ -43,7 +43,7 @@ function createVscodeMock() {
   const listeners = { changeTextDoc: [], closeTextDoc: [], colorTheme: [] };
   const docs = new Map(); // lower-cased fsPath -> doc
   const watchers = []; // { onDidChangeCbs, ... }
-  const state = { provider: undefined, panels: [], watcherGlobPatterns: [], infoMessages: [], nextInfoChoice: undefined };
+  const state = { provider: undefined, panels: [], watcherGlobPatterns: [], infoMessages: [], errorMessages: [], nextInfoChoice: undefined, commands: {}, holdInfo: false, heldInfoResolvers: [] };
 
   const fire = (arr, e) => { for (const cb of [...arr]) cb(e); };
 
@@ -75,7 +75,8 @@ function createVscodeMock() {
       get isDirty() { return this._dirty; },
       get lineCount() { return this._text.split('\n').length; },
       getText() { return this._text; },
-      save() { this._dirty = false; },
+      /** Mirrors the real save(): returns success AND persists to the mock disk. */
+      save() { this._dirty = false; this._disk = this._text; return true; },
     };
     docs.set(fsPath.toLowerCase(), doc);
     return doc;
@@ -111,14 +112,21 @@ function createVscodeMock() {
       onDidChangeActiveColorTheme(cb) { listeners.colorTheme.push(cb); return { dispose() {} }; },
       activeColorTheme: { kind: 2 },
       activeTextEditor: undefined,
-      showErrorMessage() {},
+      showErrorMessage(msg) { state.errorMessages.push(msg); },
       showInformationMessage(msg, ...items) {
         state.infoMessages.push({ msg, items });
+        if (state.holdInfo) {
+          // hold the decision so tests can exercise the pending-notification
+          // window (further writes, disk changing before the click lands)
+          return new Promise((resolve) => {
+            state.heldInfoResolvers.push((choice) => resolve(choice));
+          });
+        }
         return Promise.resolve(state.nextInfoChoice);
       },
     },
     commands: {
-      registerCommand() { return { dispose() {} }; },
+      registerCommand(id, cb) { state.commands[id] = cb; return { dispose() {} }; },
       async executeCommand() {},
     },
     workspace: {
@@ -170,12 +178,15 @@ function createVscodeMock() {
         const w = {
           glob,
           onDidChangeCbs: [],
+          onDidCreateCbs: [],
           onDidChange(cb) { this.onDidChangeCbs.push(cb); return { dispose() {} }; },
-          onDidCreate() { return { dispose() {} }; },
+          onDidCreate(cb) { this.onDidCreateCbs.push(cb); return { dispose() {} }; },
           onDidDelete() { return { dispose() {} }; },
           dispose() {},
           /** test-side: the OS just wrote the file behind this watcher's back */
           fireDiskWrite() { fire(this.onDidChangeCbs, UriFile(this.glob)); },
+          /** test-side: atomic temp+rename write surfaced as a create event */
+          fireDiskCreate() { fire(this.onDidCreateCbs, UriFile(this.glob)); },
         };
         watchers.push(w);
         return w;
@@ -191,6 +202,7 @@ function createVscodeMock() {
     RelativePattern,
     ColorThemeKind: { Light: 1, Dark: 2, HighContrast: 3, HighContrastLight: 4 },
     FileType: { Unknown: 0, File: 1, Directory: 2, SymbolicLink: 64 },
+    ViewColumn: { Active: -1, Beside: -2, One: 1, Two: 2, Three: 3 },
   };
 
   return {
@@ -372,6 +384,11 @@ async function main() {
         'document buffer ends clean (saved) after adopting the disk version',
         !doc.isDirty && doc.getText() === '# v2 (agent edit while dirty)\n'
       );
+      check(
+        'adopting the disk version reports no error (applyEdit+save both succeeded)',
+        h.state.errorMessages.length === 0,
+        h.state.errorMessages.length ? `errors: ${JSON.stringify(h.state.errorMessages)}` : undefined
+      );
     }
   }
 
@@ -384,12 +401,216 @@ async function main() {
     h.externalWriteDirtySilent(doc, '# v2 (agent)\n');
     const watcher = h.watchers.find((w) => /keep-doc\.md$/i.test(String(w.glob)));
     h.state.nextInfoChoice = 'Keep my edits';
-    if (watcher) watcher.fireDiskWrite();
-    await sleep(1200);
+    if (!watcher) {
+      check('keep-doc watcher installed', false, 'no watcher for keep-doc.md');
+    } else {
+      watcher.fireDiskWrite();
+      await sleep(1200);
+      check(
+        'buffer keeps the user content and nothing is pushed',
+        doc.getText() === '# v1 (user typed)\n' && doc.isDirty && h.updatesPosted(panel).length === 0
+      );
+    }
+  }
+
+  // --- RS: explicit save from the webview ('save' message) — content lands,
+  //     document becomes clean, and no update echo is pushed back
+  {
+    console.log('\n[external-sync] RS — webview save message');
+    const { doc, panel } = await bootSession(h, 'D:/ws/save-doc.md', '# v1\n');
+    panel.webview._posted.length = 0;
+    await h.postFromWebview(panel, { command: 'save', content: '# v1 (saved from webview)\n' });
+    await sleep(100);
+    const updates = h.updatesPosted(panel);
     check(
-      'buffer keeps the user content and nothing is pushed',
-      doc.getText() === '# v1 (user typed)\n' && doc.isDirty && h.updatesPosted(panel).length === 0
+      'document saved with the webview content and stays clean, no echo push',
+      doc.getText() === '# v1 (saved from webview)\n' && !doc.isDirty && updates.length === 0,
+      `doc=${JSON.stringify(doc.getText().slice(0, 30))} clean=${!doc.isDirty} pushes=${updates.length}`
     );
+  }
+
+  // --- EP1/EP4: the COMMAND-MODE EditorPanel path (openEditor command) — the
+  //     acceptance requires BOTH open paths to sync; these mirror R1/R4.
+  {
+    console.log('\n[external-sync] EP — command-mode EditorPanel path');
+    const doc = h.makeDoc('D:/ws/panel-doc.md', '# v1\n');
+    await h.state.commands['markdown-editor-hardened.openEditor'](
+      vscodeMock.Uri.file('D:/ws/panel-doc.md')
+    );
+    const panel = h.state.panels.at(-1);
+    check('EditorPanel created a webview panel', !!panel);
+    if (panel) {
+      await h.postFromWebview(panel, { command: 'ready' });
+      panel.webview._posted.length = 0;
+
+      // EP4: webview's own edit must not echo back (300ms debounce window)
+      await h.postFromWebview(panel, { command: 'edit', content: '# v1 (user typed)\n' });
+      await sleep(450);
+      check(
+        'EP4: no update echo on the EditorPanel path',
+        h.updatesPosted(panel).length === 0,
+        `pushes=${h.updatesPosted(panel).length}`
+      );
+
+      // EP1: clean-doc external write must push (300ms debounce)
+      h.externalWriteClean(doc, '# v2 (agent edit)\n');
+      await sleep(450);
+      const updates = h.updatesPosted(panel);
+      check(
+        'EP1: external edit reaches the webview on the EditorPanel path',
+        updates.some((u) => u.content === '# v2 (agent edit)\n'),
+        updates.length ? 'update posted' : 'no update posted'
+      );
+    }
+  }
+
+  // --- RW1: BOM-only rewrite of identical content must NOT look like a
+  //     divergence (readDisk strips the BOM the TextModel also strips)
+  {
+    console.log('\n[external-sync] RW1 — BOM rewrite is not a divergence');
+    const { doc, panel } = await bootSession(h, 'D:/ws/bom-doc.md', '# v1\n');
+    await h.postFromWebview(panel, { command: 'edit', content: '# v1 (user typed)\n' });
+    panel.webview._posted.length = 0;
+    h.state.infoMessages.length = 0;
+    // disk holds the SAME bytes as the buffer, but written with a UTF-8 BOM
+    // (PowerShell-style rewrite); the TextModel strips the BOM, readDisk must too
+    h.externalWriteDirtySilent(doc, '\uFEFF# v1 (user typed)\n');
+    const watcher = h.watchers.find((w) => /bom-doc\.md$/i.test(String(w.glob)));
+    if (!watcher) {
+      check('bom-doc watcher installed', false);
+    } else {
+      watcher.fireDiskWrite();
+      await sleep(1200);
+      check('identical rewrite asks nothing', h.state.infoMessages.length === 0);
+    }
+  }
+
+  // --- RW2: while a notification is pending, further writes must not stack
+  //     a second notification; after the decision, the newest disk content
+  //     is re-examined (asked about as a new round)
+  {
+    console.log('\n[external-sync] RW2 — pending decision suppresses stacked notifications');
+    const { doc, panel } = await bootSession(h, 'D:/ws/pending-doc.md', '# v1\n');
+    await h.postFromWebview(panel, { command: 'edit', content: '# v1 (user typed)\n' });
+    panel.webview._posted.length = 0;
+    h.state.infoMessages.length = 0;
+    h.state.holdInfo = true;
+
+    h.externalWriteDirtySilent(doc, '# v2\n');
+    const watcher = h.watchers.find((w) => /pending-doc\.md$/i.test(String(w.glob)));
+    if (!watcher) {
+      check('pending-doc watcher installed', false);
+    } else {
+      watcher.fireDiskWrite();
+      await sleep(1200); // first notification now pending
+      check('first conflict notification shown', h.state.infoMessages.length === 1);
+
+      // agent writes again while the user has not decided
+      h.externalWriteDirtySilent(doc, '# v3\n');
+      watcher.fireDiskWrite();
+      await sleep(1600);
+      check('no second notification stacks on the pending one', h.state.infoMessages.length === 1,
+        `messages=${h.state.infoMessages.length}`);
+
+      // user finally keeps their edits → the v3 round is re-asked
+      h.state.heldInfoResolvers[0]('Keep my edits');
+      await sleep(2200); // 1s re-examine poll + debounce margin
+      check('after the decision, the newer disk content is asked about',
+        h.state.infoMessages.length === 2,
+        `messages=${h.state.infoMessages.length}`);
+      h.state.heldInfoResolvers[1] && h.state.heldInfoResolvers[1]('Keep my edits');
+    }
+    h.state.holdInfo = false;
+    h.state.heldInfoResolvers = [];
+  }
+
+  // --- RW3: approving "Load disk version" must not apply a snapshot that no
+  //     longer matches the disk at click time
+  {
+    console.log('\n[external-sync] RW3 — stale snapshot is not applied');
+    const { doc, panel } = await bootSession(h, 'D:/ws/stale-doc.md', '# v1\n');
+    await h.postFromWebview(panel, { command: 'edit', content: '# v1 (user typed)\n' });
+    panel.webview._posted.length = 0;
+    h.state.infoMessages.length = 0;
+    h.state.holdInfo = true;
+
+    h.externalWriteDirtySilent(doc, '# v2 approved\n');
+    const watcher = h.watchers.find((w) => /stale-doc\.md$/i.test(String(w.glob)));
+    if (!watcher) {
+      check('stale-doc watcher installed', false);
+    } else {
+      watcher.fireDiskWrite();
+      await sleep(1200); // notification for v2 pending
+      // the agent overwrites again BEFORE the user clicks Load
+      h.externalWriteDirtySilent(doc, '# v3 newer\n');
+      h.state.heldInfoResolvers[0]('Load disk version');
+      await sleep(800);
+      check(
+        'stale v2 is NOT applied to the document',
+        doc.getText() === '# v1 (user typed)\n',
+        `doc=${JSON.stringify(doc.getText().slice(0, 30))}`
+      );
+      check('stale v2 is NOT pushed to the webview', h.updatesPosted(panel).length === 0);
+
+      // after the stale load is dropped, the next watcher event re-asks
+      // about the newer disk content as a fresh round
+      h.state.heldInfoResolvers = [];
+      watcher.fireDiskWrite();
+      await sleep(1500);
+      check('the newer disk content is asked about after the dropped load',
+        h.state.infoMessages.length === 2,
+        `messages=${h.state.infoMessages.length}`);
+      h.state.heldInfoResolvers[0] && h.state.heldInfoResolvers[0]('Keep my edits');
+    }
+    h.state.holdInfo = false;
+    h.state.heldInfoResolvers = [];
+  }
+
+  // --- RW5: atomic temp+rename writes surface as create events — the
+  //     onDidCreate subscription must drive the same check pipeline
+  {
+    console.log('\n[external-sync] RW5 — atomic write (create event) path');
+    const { doc, panel } = await bootSession(h, 'D:/ws/atomic-doc.md', '# v1\n');
+    await h.postFromWebview(panel, { command: 'edit', content: '# v1 (user typed)\n' });
+    panel.webview._posted.length = 0;
+    h.state.infoMessages.length = 0;
+    h.state.nextInfoChoice = 'Load disk version';
+    h.externalWriteDirtySilent(doc, '# v2 (atomic rename write)\n');
+    const watcher = h.watchers.find((w) => /atomic-doc\.md$/i.test(String(w.glob)));
+    if (!watcher) {
+      check('atomic-doc watcher installed', false);
+    } else {
+      check('onDidCreate is subscribed', watcher.onDidCreateCbs.length === 1);
+      watcher.fireDiskCreate();
+      await sleep(1200);
+      const updates = h.updatesPosted(panel);
+      check(
+        'create-event write reaches the webview after Load',
+        updates.some((u) => u.content === '# v2 (atomic rename write)\n'),
+        updates.length ? 'update posted' : 'no update posted'
+      );
+    }
+  }
+
+  // --- RW4: undecodable bytes (non-UTF-8 rewrite) never reach applyEdit
+  {
+    console.log('\n[external-sync] RW4 — non-UTF-8 disk content is ignored');
+    const { doc, panel } = await bootSession(h, 'D:/ws/gbk-doc.md', '# v1\n');
+    await h.postFromWebview(panel, { command: 'edit', content: '# v1 (user typed)\n' });
+    panel.webview._posted.length = 0;
+    h.state.infoMessages.length = 0;
+    h.state.nextInfoChoice = 'Load disk version';
+    h.externalWriteDirtySilent(doc, '# v1 \uFFFD\uFFFD gbk bytes\n');
+    const watcher = h.watchers.find((w) => /gbk-doc\.md$/i.test(String(w.glob)));
+    if (!watcher) {
+      check('gbk-doc watcher installed', false);
+    } else {
+      watcher.fireDiskWrite();
+      await sleep(1200);
+      check('no notification for undecodable content', h.state.infoMessages.length === 0);
+      check('document untouched by undecodable content',
+        doc.getText() === '# v1 (user typed)\n');
+    }
   }
 
   // summary

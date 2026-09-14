@@ -531,7 +531,7 @@ class EditorPanel {
       if (e.fileName === this._fsPath) {
         this.dispose()
       }
-    }, this._disposables)
+    }, null, this._disposables)
     // External-change backstop: while the document is DIRTY, VS Code refuses
     // to reload it on disk writes (measured — see
     // src/external-change-watcher.ts), so agent edits would vanish silently.
@@ -584,7 +584,7 @@ class EditorPanel {
       textEditTimer = setTimeout(() => {
         this._update()
       }, 300)
-    }, this._disposables)
+    }, null, this._disposables)
     // Handle messages from the webview — dispatched through the shared
     // `handleWebviewMessage` (DC12). This class only provides the
     // per-session bindings (panel, document, fileUri, context, callbacks);
@@ -677,6 +677,15 @@ class EditorPanel {
     const md = this._document
       ? this._document.getText()
       : (await vscode.workspace.fs.readFile(this._uri)).toString()
+    // Event-driven updates re-send the document whenever it differs from
+    // the last synced content; by the debounced timer fires, a concurrent
+    // 'edit' may have already synced the same text — pushing it anyway
+    // would needlessly setValue the whole document (cursor reset). Explicit
+    // inits (props.type === 'init') are never skipped: they rebuild the
+    // webview and restore the reading position.
+    if (!props.type && this._tracker.isEcho(md)) {
+      return
+    }
     // What we push is, by construction, the content the webview will hold
     // next — the document listener needs it as the new echo baseline.
     this._tracker.notePostedToWebview(md)
@@ -852,6 +861,14 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     // Send update to webview
     const updateWebview = (props: { type?: 'init' | 'update'; options?: any; theme?: 'dark' | 'light' } = {}) => {
       const content = document.getText()
+      // Event-driven updates skip content already in sync (a concurrent
+      // 'edit' may have synced the same text — pushing it anyway would
+      // needlessly setValue the whole document and reset the cursor).
+      // Explicit inits are never skipped: they rebuild the webview and
+      // restore the reading position.
+      if (!props.type && tracker.isEcho(content)) {
+        return
+      }
       // What we push is the content the webview will hold next — the
       // document listener needs it as the new echo baseline.
       tracker.notePostedToWebview(content)
