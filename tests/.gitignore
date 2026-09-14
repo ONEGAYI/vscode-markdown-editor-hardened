@@ -4,3 +4,9 @@ fixtures/*.min.js
 node_modules/
 package-lock.json
 yarn.lock
+
+# VS Code probe instance scratch data (tests/vscode-probe)
+vscode-probe/.userdata/
+vscode-probe/.extdir/
+vscode-probe/probe-stdout.log
+vscode-probe/probe-results.json

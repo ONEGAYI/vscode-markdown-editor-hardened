@@ -3,6 +3,8 @@ import * as NodePath from 'path'
 import { validateWorkspaceRelativePath } from './security/path-validation'
 import { handleWebviewMessage, WebviewSession } from './webview/message-dispatcher'
 import { scrollPositions } from './scroll-positions'
+import { SyncTracker } from './sync-tracker'
+import { attachExternalChangeWatcher } from './external-change-watcher'
 const KeyVditorOptions = 'vditor.options'
 
 function debug(...args: any[]) {
@@ -11,31 +13,6 @@ function debug(...args: any[]) {
 
 function showError(msg: string) {
   vscode.window.showErrorMessage(`[markdown-editor-hardened] ${msg}`)
-}
-
-/**
- * True when a document change came from disk rather than from the webview
- * (upstream 10870ac + 651b300, adapted).
- *
- * Webview edits reach the document through applyEdit and always leave it
- * dirty, so a content change that leaves the document clean can only be
- * VS Code reloading a file that another program wrote. That also means
- * there is no pending webview edit to clobber: if the webview had
- * unsynced content, the document would still be dirty.
- *
- * The contentChanges check matters: onDidChangeTextDocument also fires for
- * pure dirty-state transitions with an empty contentChanges array, so
- * every save (incl. autosave) emits a clean-document event that must not
- * be mistaken for a reload — otherwise typing with autosave on would
- * push the full document back into the webview every few seconds and
- * reset the editor/cursor.
- *
- * NOTE: both listeners now short-circuit on an empty contentChanges BEFORE
- * this helper is consulted, so the `contentChanges.length > 0` term below is
- * redundant on those call paths (kept so the helper stays correct on its own).
- */
-function isExternalReload(e: vscode.TextDocumentChangeEvent) {
-  return e.contentChanges.length > 0 && !e.document.isDirty
 }
 
 /**
@@ -555,6 +532,10 @@ class EditorPanel {
         this.dispose()
       }
     }, this._disposables)
+    // External-change backstop: while the document is DIRTY, VS Code refuses
+    // to reload it on disk writes (measured — see
+    // src/external-change-watcher.ts), so agent edits would vanish silently.
+    attachExternalChangeWatcher(this._document, this._disposables)
     // re-init webview when VS Code theme changes
     vscode.window.onDidChangeActiveColorTheme((theme) => {
       this._update({
@@ -583,21 +564,20 @@ class EditorPanel {
         return
       }
       // A pure dirty-state transition (empty contentChanges — every save,
-      // including autosave) carries no new text. Refresh the title from it, but
-      // never push the document back into the webview: that would reset the
-      // reading position and cursor. The check has to come BEFORE the guard
-      // below, which is short-circuited for an inactive panel (the very case
-      // where an autosave currently re-sends the whole document).
+      // including autosave) carries no new text. Refresh the title from it,
+      // but never push the document back into the webview: that would reset
+      // the reading position and cursor.
       this._updateEditTitle()
       if (e.contentChanges.length === 0) {
         return
       }
-      // Don't echo the webview's own edits back at it, but always take a
-      // change that came from disk (upstream 10870ac): the panel stays
-      // "active" while VS Code has lost OS focus to another program —
-      // exactly when external edits happen — so an `active`-only guard
-      // dropped every external edit until the tab was reopened.
-      if (this._panel.active && !isExternalReload(e)) {
+      // Echo test by content, not by event shape: VS Code ≥1.137 emits an
+      // applyEdit's content-change event BEFORE the dirty flag flips, so
+      // the webview's own sync is indistinguishable from a disk reload by
+      // shape (measured in tests/vscode-probe). Text equal to the last
+      // synced content is our own echo — skip it; anything else (disk
+      // reload, another extension's applyEdit) is new — push it.
+      if (this._tracker.isEcho(e.document.getText())) {
         return
       }
       textEditTimer && clearTimeout(textEditTimer)
@@ -616,6 +596,7 @@ class EditorPanel {
       fileUri: this._uri,
       document: this._document,
       context: this._context,
+      tracker: this._tracker,
       postUpdate: (props) => this._update(props),
       onEditApplied: () => this._updateEditTitle(),
     }
@@ -670,6 +651,8 @@ class EditorPanel {
     this._panel.title = NodePath.basename(this._fsPath)
   }
   private _isEdit = false
+  /** Content-sync state shared with the document-change listener (DC-sync). */
+  private readonly _tracker = new SyncTracker()
   private _updateEditTitle() {
     const isEdit = this._document.isDirty
     if (isEdit !== this._isEdit) {
@@ -694,6 +677,9 @@ class EditorPanel {
     const md = this._document
       ? this._document.getText()
       : (await vscode.workspace.fs.readFile(this._uri)).toString()
+    // What we push is, by construction, the content the webview will hold
+    // next — the document listener needs it as the new echo baseline.
+    this._tracker.notePostedToWebview(md)
     // const dir = NodePath.dirname(this._document.fileName)
     this._panel.webview.postMessage({
       command: 'update',
@@ -850,6 +836,9 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
     const disposables: vscode.Disposable[] = []
     let isEditing = false
+    // Content-sync state shared between this listener and the webview
+    // message handlers (see src/sync-tracker.ts).
+    const tracker = new SyncTracker()
 
     // Update title to show edit status
     const updateEditTitle = () => {
@@ -862,9 +851,13 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
     // Send update to webview
     const updateWebview = (props: { type?: 'init' | 'update'; options?: any; theme?: 'dark' | 'light' } = {}) => {
+      const content = document.getText()
+      // What we push is the content the webview will hold next — the
+      // document listener needs it as the new echo baseline.
+      tracker.notePostedToWebview(content)
       webviewPanel.webview.postMessage({
         command: 'update',
-        content: document.getText(),
+        content,
         // Upstream 9c8e962: restore the remembered reading position on
         // (re)init — the webview is disposed/recreated per file switch.
         ...(props.type === 'init'
@@ -881,6 +874,11 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       }
     }, null, disposables)
 
+    // External-change backstop: while the document is DIRTY, VS Code refuses
+    // to reload it on disk writes (measured — see
+    // src/external-change-watcher.ts), so agent edits would vanish silently.
+    attachExternalChangeWatcher(document, disposables)
+
     // Listen for document changes (sync from external editor to webview)
     vscode.workspace.onDidChangeTextDocument((e) => {
       if (e.document.fileName !== document.fileName) {
@@ -893,9 +891,13 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       if (e.contentChanges.length === 0) {
         return
       }
-      // Don't echo the webview's own edits back at it, but always take a
-      // change that came from disk - see isExternalReload (upstream 10870ac).
-      if (webviewPanel.active && !isExternalReload(e)) {
+      // Echo test by content, not by event shape — VS Code ≥1.137 fires an
+      // applyEdit's content-change event BEFORE the dirty flag flips, so the
+      // webview's own sync and a disk reload are indistinguishable by shape
+      // (measured in tests/vscode-probe). Equal-to-last-synced content is our
+      // own echo; anything else is an external edit (disk reload, another
+      // extension's applyEdit) and must reach the webview.
+      if (tracker.isEcho(e.document.getText())) {
         return
       }
       updateWebview()
@@ -909,6 +911,7 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       fileUri: uri,
       document,
       context: this.context,
+      tracker,
       postUpdate: (props) => updateWebview(props ?? {}),
       onEditApplied: updateEditTitle,
     }

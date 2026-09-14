@@ -285,8 +285,18 @@ async function main() {
   );
   add('[host] gutter reads live vditor.getValue()', OUT_EXT.includes('vditor.getValue'));
   add(
-    '[host] external-reload discriminates by contentChanges+dirty',
-    OUT_EXT.includes('contentChanges.length > 0') && OUT_EXT.includes('isExternalReload')
+    '[host] external-edit discrimination is content-based (SyncTracker), not dirty-flag shape',
+    // VS Code ≥1.137 fires applyEdit's content event BEFORE the dirty flag
+    // flips (measured, tests/vscode-probe), so the old contentChanges+dirty
+    // heuristic could not tell the webview's own echo from a disk reload.
+    // The listeners must consult the SyncTracker echo test instead.
+    OUT_EXT.includes('isEcho') && OUT_DISPATCHER.includes('noteWebviewContent') && !OUT_EXT.includes('isExternalReload')
+  );
+  add(
+    '[host] dirty-doc disk writes have a watcher backstop',
+    // While the document is dirty VS Code fires NOTHING on external writes
+    // (measured) — the extension must watch the file itself.
+    OUT_EXT.includes('attachExternalChangeWatcher')
   );
   add(
     '[host] empty contentChanges short-circuits the sync path',

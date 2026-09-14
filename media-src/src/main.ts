@@ -407,6 +407,26 @@ window.addEventListener('message', (e) => {
   }
 })
 
+// VS Code's webview wrapper forwards EVERY keydown of this page to the
+// workbench keybinding service: pre/index.html attaches a listener to the
+// inner iframe's contentWindow that serialises the event (without a
+// defaultPrevented field) and posts it to the host, which re-dispatches it
+// as a synthetic KeyboardEvent on the workbench window. A shortcut the
+// editor already fully consumed therefore ALSO runs VS Code's binding —
+// e.g. vditor's Ctrl+B bolds the text and toggles the sidebar at the same
+// time. preventDefault() cannot help (the host never sees that flag); the
+// only interception point is stopPropagation BEFORE the event bubbles to
+// the window-level forwarder. vditor consumes its shortcuts at the editor
+// ELEMENT level and its hotkey path unconditionally calls preventDefault,
+// so by the time a bubble listener on document runs, defaultPrevented is
+// true for exactly the modifier combos the editor claimed. Stop those —
+// plain keys and unclaimed combos still forward (VS Code keeps working).
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey || e.altKey) && e.defaultPrevented) {
+    e.stopPropagation()
+  }
+}, false)
+
 fixLinkClick()
 fixCut()
 

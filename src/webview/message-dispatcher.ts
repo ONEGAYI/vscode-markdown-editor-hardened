@@ -43,6 +43,7 @@ import * as NodePath from 'path'
 import { validateUploadEntries } from '../upload-validation'
 import { validateOpenLinkUrl } from '../security/path-validation'
 import { scrollPositions } from '../scroll-positions'
+import { SyncTracker } from '../sync-tracker'
 
 const KeyVditorOptions = 'vditor.options'
 
@@ -87,6 +88,14 @@ export interface WebviewSession {
 
   /** Extension context — for globalState reads/writes. */
   context: vscode.ExtensionContext
+
+  /**
+   * Shared content-sync state. The caller owns the instance so both the
+   * message handlers here and the document-change listener in extension.ts
+   * see the same "last synced content" (see src/sync-tracker.ts for why
+   * content comparison replaced the isExternalReload heuristic).
+   */
+  tracker: SyncTracker
 
   /**
    * Post an `update` message to the webview. The two paths differ on
@@ -183,6 +192,10 @@ export async function handleWebviewMessage(message: any, session: WebviewSession
       // Only sync to VS Code editor when webview is in edit mode to
       // avoid repeated refresh from the host-side write.
       if (session.isActive()) {
+        // Record BEFORE applyEdit: the change event it triggers fires with
+        // this exact content, and the document listener must recognise it
+        // as our own echo rather than an external edit (see SyncTracker).
+        session.tracker.noteWebviewContent(message.content)
         await syncToEditor()
         session.onEditApplied?.()
       }
@@ -193,6 +206,7 @@ export async function handleWebviewMessage(message: any, session: WebviewSession
       break
     }
     case 'save': {
+      session.tracker.noteWebviewContent(message.content)
       await syncToEditor()
       if (session.document) {
         await session.document.save()
