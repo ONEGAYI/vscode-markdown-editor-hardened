@@ -203,15 +203,19 @@ async function main() {
     }
     add(`[${mode}] #ln-gutter created`, st.gutter);
     add(`[${mode}] one .ln per block (got ${st.numbers.length}, want ${EXPECTED_STARTS.length})`, st.numbers.length === EXPECTED_STARTS.length);
-    // Exact block-start mapping + drift are pinned by line-numbers.js on
-    // a controlled stack. Here the numbers come from the REAL
-    // vditor.getValue(), whose blank-line normalization differs per mode
-    // (wysiwyg collapses the blank after frontmatter, ir doesn't, etc.)
-    // — the gutter is faithful to each mode's live value, so assert the
-    // structural contract instead of mode-specific exact values.
-    const nums = st.numbers.map(Number);
-    add(`[${mode}] numbers strictly increasing from 1 (got [${st.numbers}])`,
-      nums.length === EXPECTED_STARTS.length && nums[0] === 1 && nums.every((n, i) => i === 0 || n > nums[i - 1]));
+    // These are the numbers the gutter ACTUALLY shows on the real stack, pinned
+    // per mode so any change in vditor's serialization is caught.
+    //
+    // They differ from the source file's block starts ([1,5,7,10,13,17,21])
+    // because the gutter reads the LIVE vditor value (upstream 9b4f158, which
+    // fixed the numbers never updating after an edit): vditor re-serializes the
+    // document and collapses blank lines, so everything below the frontmatter
+    // shifts up. Known limitation, documented in the showLineNumbers setting
+    // description — not silently accepted, hence the exact pin here.
+    const EXPECTED_REAL = { wysiwyg: [1, 4, 6, 9, 12, 16, 20], ir: [1, 4, 6, 9, 12, 17, 21] };
+    const want = EXPECTED_REAL[mode];
+    add(`[${mode}] numbers match the pinned real-stack values (got [${st.numbers}], want [${want}])`,
+      st.numbers.length === want.length && st.numbers.every((n, i) => Number(n) === want[i]));
     // toggle behavior on the REAL stack: hide, then restore
     const btn = st.document.getElementById('ln-toggle');
     const gutterEl = st.document.getElementById('ln-gutter');

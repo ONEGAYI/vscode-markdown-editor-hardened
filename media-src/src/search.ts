@@ -4,6 +4,8 @@
  * purely via ::highlight() pseudo-elements, so vditor's internal state is never touched.
  */
 
+import { getActiveEditorRoot } from './editor-root'
+
 let searchRanges: Range[] = []
 let currentIndex = -1
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -13,28 +15,7 @@ function escapeRegex(s: string): string {
 }
 
 function getEditorRoot(): Element | null {
-  // FORK ADAPTATION (WYSIWYG-default): vditor 3.11 keeps all three mode
-  // containers (.vditor-ir / .vditor-wysiwyg / .vditor-sv) in the DOM at
-  // once; only the ACTIVE one holds rendered content. Upstream's fixed
-  // IR-first query order works there because upstream defaults to IR —
-  // here it would resolve the inactive IR container's EMPTY reset and
-  // find nothing. Resolve the active mode's container first (same logic
-  // as the line-number gutter's pick()), then fall back to upstream's
-  // order.
-  try {
-    const mode = (window as any).vditor?.getCurrentMode?.()
-    if (mode) {
-      const active = document.querySelector(`.vditor-${mode} .vditor-reset`)
-      if (active && active.children.length > 0) return active
-    }
-  } catch (_) {
-    // fall through to the static order
-  }
-  return (
-    document.querySelector('.vditor-ir .vditor-reset') ||
-    document.querySelector('.vditor-wysiwyg .vditor-reset') ||
-    document.querySelector('.vditor-sv .vditor-reset')
-  )
+  return getActiveEditorRoot()
 }
 
 function findAllRanges(query: string, caseSensitive: boolean): Range[] {
@@ -140,6 +121,10 @@ export function initSearch() {
     isOpen = true
     bar.classList.add('vmd-search-bar--open')
     bar.setAttribute('aria-hidden', 'false')
+    // Re-bind the observer to whatever container is active now: a mode switch
+    // (or a vditor rebuild) leaves the previous binding pointing at a container
+    // that is no longer the editing surface.
+    observeRoot()
     input.focus()
     input.select()
     if (input.value) runSearch()
@@ -160,6 +145,8 @@ export function initSearch() {
   }
 
   function runSearch() {
+    // The container may have changed (mode switch) since the last run.
+    observeRoot()
     searchRanges = findAllRanges(input.value, caseCheckbox.checked)
     currentIndex = searchRanges.length > 0 ? 0 : -1
     applyHighlights(searchRanges, currentIndex)
@@ -200,29 +187,38 @@ export function initSearch() {
   nextBtn.addEventListener('click', goNext)
   closeBtn.addEventListener('click', close)
 
-  // Ctrl+F / Cmd+F — intercept before the browser or VS Code handles it
+  // Ctrl+F / Cmd+F — intercept before the browser or VS Code handles it.
+  // Compare case-insensitively: with CapsLock on, `e.key` is 'F'.
   document.addEventListener('keydown', (e: KeyboardEvent) => {
-    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key === 'f') {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
       e.preventDefault()
       e.stopPropagation()
       open()
     }
   }, true)
 
-  // When editor content changes, re-run the search so highlight ranges stay valid
+  // When editor content changes, re-run the search so highlight ranges stay valid.
+  // The observer is re-bound whenever the resolved container changes: the mode
+  // containers stay in the DOM permanently, so an observer bound to the container
+  // that was active at mount time stops seeing edits after a mode switch (and after
+  // a theme change, which destroys and rebuilds vditor's DOM entirely).
+  let observedRoot: Element | null = null
+  let observer: MutationObserver | null = null
   const observeRoot = () => {
     const root = getEditorRoot()
-    if (!root) return
-
-    new MutationObserver(() => {
+    if (!root || root === observedRoot) return
+    if (observer) observer.disconnect()
+    observer = new MutationObserver(() => {
       if (!isOpen || !input.value) return
       if (debounceTimer) clearTimeout(debounceTimer)
       debounceTimer = setTimeout(runSearch, 300)
-    }).observe(root, { childList: true, subtree: true, characterData: true })
+    })
+    observer.observe(root, { childList: true, subtree: true, characterData: true })
+    observedRoot = root
   }
 
   // Delay observation until vditor has fully mounted
   setTimeout(observeRoot, 1000)
 
-  return { open, close }
+  return { open, close, reobserve: observeRoot }
 }

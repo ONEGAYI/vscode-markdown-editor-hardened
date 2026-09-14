@@ -177,7 +177,14 @@ async function main() {
   window.eval(scriptBody);
 
   // --- seed the live editor value the script reads (vditor.getValue,
-  //     per upstream 9b4f158 — replaces the old __setOrigContent post) ---
+  //     per upstream 9b4f158 — replaces the old __setOrigContent post).
+  //
+  //     NOTE: these stubs return the markdown VERBATIM, so the exact
+  //     [1,5,7,...] expectations below pin the SCRIPT's line-parsing
+  //     logic only. Real vditor re-serializes the document and shifts
+  //     the numbers (see the EXPECTED_REAL pin in line-numbers-modes.js,
+  //     which drives the real stack); do not read a pass here as proof
+  //     that gutter numbers equal source-file line numbers.
   let liveValue = MD;
   window.vditor = { getValue: () => liveValue, getCurrentMode: () => 'wysiwyg' };
 

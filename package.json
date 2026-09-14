@@ -91,7 +91,7 @@
         "markdown-editor-hardened.showLineNumbers": {
           "type": "boolean",
           "default": true,
-          "description": "Show line numbers in the left gutter of the markdown editor (maps to source-file line numbers, not rendered output lines). Adapted for CSP from upstream PR #157 — credit asalcedo29."
+          "description": "Show line numbers in the left gutter of the markdown editor. Each number is the block-start line within the editor's current markdown text (not rendered-output lines), paired with a rendered block in order. Note: vditor re-serializes the document — it drops blank lines after YAML frontmatter, inserts them between adjacent blocks and collapses runs — so numbers can differ from the file on disk by several lines, most visibly below a frontmatter block. Adapted for CSP from upstream PR #157 — credit asalcedo29."
         },
         "markdown-editor-hardened.defaultOpenOutline": {
           "type": "boolean",

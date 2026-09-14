@@ -29,6 +29,10 @@ function showError(msg: string) {
  * be mistaken for a reload — otherwise typing with autosave on would
  * push the full document back into the webview every few seconds and
  * reset the editor/cursor.
+ *
+ * NOTE: both listeners now short-circuit on an empty contentChanges BEFORE
+ * this helper is consulted, so the `contentChanges.length > 0` term below is
+ * redundant on those call paths (kept so the helper stays correct on its own).
  */
 function isExternalReload(e: vscode.TextDocumentChangeEvent) {
   return e.contentChanges.length > 0 && !e.document.isDirty
@@ -578,6 +582,16 @@ class EditorPanel {
       if (e.document.fileName !== this._document.fileName) {
         return
       }
+      // A pure dirty-state transition (empty contentChanges — every save,
+      // including autosave) carries no new text. Refresh the title from it, but
+      // never push the document back into the webview: that would reset the
+      // reading position and cursor. The check has to come BEFORE the guard
+      // below, which is short-circuited for an inactive panel (the very case
+      // where an autosave currently re-sends the whole document).
+      this._updateEditTitle()
+      if (e.contentChanges.length === 0) {
+        return
+      }
       // Don't echo the webview's own edits back at it, but always take a
       // change that came from disk (upstream 10870ac): the panel stays
       // "active" while VS Code has lost OS focus to another program —
@@ -589,7 +603,6 @@ class EditorPanel {
       textEditTimer && clearTimeout(textEditTimer)
       textEditTimer = setTimeout(() => {
         this._update()
-        this._updateEditTitle()
       }, 300)
     }, this._disposables)
     // Handle messages from the webview — dispatched through the shared
@@ -725,7 +738,7 @@ class EditorPanel {
       EditorPanel.config.get<string>('customStylesheet')
     )
     const customStylesheetLink = customStylesheetUri
-      ? `<link href="${customStylesheetUri}" rel="stylesheet">`
+      ? `<link href="${customStylesheetUri}" rel="stylesheet" data-vmd-css="1">`
       : ''
 
     // DC4: per-render CSP nonce. Each render gets a fresh nonce; only
@@ -756,14 +769,37 @@ class EditorPanel {
 					(function(){
 						var links=document.querySelectorAll('link[data-vmd-css="1"]');
 						var finish=function(){document.documentElement.setAttribute('data-vmd-css-loaded','1')};
-						if(!links.length){finish();return}
-						var count=0;
-						var fin=function(){count++;if(count>=links.length)finish()};
-						for(var i=0;i<links.length;i++){
-							var l=links[i];
-							l.onload=fin;l.onerror=fin;
-							if(l.sheet)fin();
+						if(!links.length){finish()}else{
+							// Dedupe: a stylesheet that is ALREADY loaded fires no
+							// load event, so link.sheet is counted instead — the
+							// same link must not be counted twice.
+							var pending=[];
+							var fin=function(l){
+								if(pending.indexOf(l)!==-1){pending.splice(pending.indexOf(l),1)}
+								if(!pending.length)finish()
+							};
+							for(var i=0;i<links.length;i++){pending.push(links[i])}
+							for(var i=0;i<links.length;i++){
+								var l=links[i];
+								if(l.sheet){fin(l);continue}
+								l.onload=function(){fin(this)};
+								l.onerror=function(){fin(this)};
+							}
+							if(!pending.length)finish()
 						}
+						// Safety net for THIS page load: vditor runs its after()
+						// callback inside the promise chain of its asset loader, so a
+						// failure there can never reach main.ts's try/catch and
+						// data-vmd-ready would never be set — leaving #app invisible
+						// with no way for the user to recover. Reveal anyway after a
+						// grace period: a half-built editor beats a blank page.
+						// main.ts re-arms its own watchdog on every (re)init, so this
+						// one only has to cover a bundle that never started at all.
+						setTimeout(function(){
+							if(!document.documentElement.hasAttribute('data-vmd-ready')){
+								document.documentElement.setAttribute('data-vmd-ready','1');
+							}
+						},4000);
 					})();
 				</script>
 
@@ -850,13 +886,19 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       if (e.document.fileName !== document.fileName) {
         return
       }
+      // Empty contentChanges = pure dirty-state transition (a save). Update the
+      // title from it, but do not re-send the document — see the matching guard
+      // in EditorPanel's listener for the full rationale.
+      updateEditTitle()
+      if (e.contentChanges.length === 0) {
+        return
+      }
       // Don't echo the webview's own edits back at it, but always take a
       // change that came from disk - see isExternalReload (upstream 10870ac).
       if (webviewPanel.active && !isExternalReload(e)) {
         return
       }
       updateWebview()
-      updateEditTitle()
     }, null, disposables)
 
     // Handle messages from webview — shared dispatcher (DC12). See
@@ -925,7 +967,7 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       EditorPanel.config.get<string>('customStylesheet')
     )
     const customStylesheetLink = customStylesheetUri
-      ? `<link href="${customStylesheetUri}" rel="stylesheet">`
+      ? `<link href="${customStylesheetUri}" rel="stylesheet" data-vmd-css="1">`
       : ''
 
     // DC4: per-render CSP nonce. Same shape as EditorPanel._getHtmlForWebview.
@@ -955,14 +997,37 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 					(function(){
 						var links=document.querySelectorAll('link[data-vmd-css="1"]');
 						var finish=function(){document.documentElement.setAttribute('data-vmd-css-loaded','1')};
-						if(!links.length){finish();return}
-						var count=0;
-						var fin=function(){count++;if(count>=links.length)finish()};
-						for(var i=0;i<links.length;i++){
-							var l=links[i];
-							l.onload=fin;l.onerror=fin;
-							if(l.sheet)fin();
+						if(!links.length){finish()}else{
+							// Dedupe: a stylesheet that is ALREADY loaded fires no
+							// load event, so link.sheet is counted instead — the
+							// same link must not be counted twice.
+							var pending=[];
+							var fin=function(l){
+								if(pending.indexOf(l)!==-1){pending.splice(pending.indexOf(l),1)}
+								if(!pending.length)finish()
+							};
+							for(var i=0;i<links.length;i++){pending.push(links[i])}
+							for(var i=0;i<links.length;i++){
+								var l=links[i];
+								if(l.sheet){fin(l);continue}
+								l.onload=function(){fin(this)};
+								l.onerror=function(){fin(this)};
+							}
+							if(!pending.length)finish()
 						}
+						// Safety net for THIS page load: vditor runs its after()
+						// callback inside the promise chain of its asset loader, so a
+						// failure there can never reach main.ts's try/catch and
+						// data-vmd-ready would never be set — leaving #app invisible
+						// with no way for the user to recover. Reveal anyway after a
+						// grace period: a half-built editor beats a blank page.
+						// main.ts re-arms its own watchdog on every (re)init, so this
+						// one only has to cover a bundle that never started at all.
+						setTimeout(function(){
+							if(!document.documentElement.hasAttribute('data-vmd-ready')){
+								document.documentElement.setAttribute('data-vmd-ready','1');
+							}
+						},4000);
 					})();
 				</script>
 

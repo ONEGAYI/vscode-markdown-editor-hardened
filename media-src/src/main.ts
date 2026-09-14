@@ -34,6 +34,14 @@ function scrollLog(...args: any[]) {
   console.log('[vmd-scroll]', ...args)
 }
 
+/**
+ * Timing over which an editor build may take to reach after(). If it never does,
+ * the reveal watchdog in initVditor() forces #app visible rather than leaving a
+ * blank page (vditor's after() runs inside an async promise chain, so a failure
+ * there cannot reach main.ts's try/catch).
+ */
+let revealWatchdog: ReturnType<typeof setTimeout> | undefined
+
 function getScrollEl(): HTMLElement | null {
   // The actual scrollable container isn't always the same node (depends on mode /
   // toolbar pin state / layout), so pick whichever candidate is really overflowing
@@ -128,6 +136,14 @@ function restoreScrollPosition(scrollTop: number) {
   const startedAt = Date.now()
   let lastHeight = el.scrollHeight
   let lastChangedAt = startedAt
+  // Declared before finish() uses it so finish() can safely run before the
+  // interval exists: cancel() may execute during the synchronous apply() below,
+  // and a `const pollTimer` declared after finish() would then throw a TDZ
+  // ReferenceError, skipping the activeCancel/lastApplied cleanup. This guards
+  // that error, not the timer: on that (in practice unreachable — scroll events
+  // are dispatched asynchronously) path the interval is still created afterwards
+  // and then exits immediately on the `done` flag.
+  let pollTimer: ReturnType<typeof setInterval> | undefined
 
   const cancel = () => {
     if (userScrolled) return
@@ -138,7 +154,7 @@ function restoreScrollPosition(scrollTop: number) {
   const finish = (reason: string) => {
     if (done) return
     done = true
-    clearInterval(pollTimer)
+    if (pollTimer !== undefined) clearInterval(pollTimer)
     if (vmdRestoreState.activeCancel === cancel) {
       vmdRestoreState.activeCancel = null
       vmdRestoreState.lastApplied = null
@@ -151,7 +167,7 @@ function restoreScrollPosition(scrollTop: number) {
   vmdRestoreState.activeCancel = cancel
   apply()
 
-  const pollTimer = setInterval(() => {
+  pollTimer = setInterval(() => {
     if (userScrolled) {
       finish('user scrolled')
       return
@@ -184,6 +200,13 @@ function initVditor(msg) {
   // CSP-safe css-load wiring script, which runs while the parser may still
   // be inside <head> where <body> doesn't exist yet.
   document.documentElement.removeAttribute('data-vmd-ready')
+  // Re-arm the reveal watchdog for this build. The host's page-level fallback
+  // is one-shot (it fires 4s after page load), so without this a re-init that
+  // fails after that window would hide #app permanently. Cleared in after().
+  if (revealWatchdog !== undefined) clearTimeout(revealWatchdog)
+  revealWatchdog = setTimeout(() => {
+    document.documentElement.setAttribute('data-vmd-ready', '1')
+  }, 4000)
   let inputTimer
   let defaultOptions: any = {}
   defaultOptions = merge(defaultOptions, msg.options, {
@@ -253,6 +276,15 @@ function initVditor(msg) {
     // priority. If they HAVE no saved preference, the `||` below
     // falls through to our 'wysiwyg' default.
     ...defaultOptions,
+    // Turn OFF vditor's own link opening. vditor's `link.isOpen` defaults to true,
+    // and its click handlers call `window.open(href)` before `preventDefault()` —
+    // but they never stopPropagation, so the event still bubbles to the document
+    // listener in fixLinkClick, and a single click dispatches TWO open-link
+    // messages (an http link opens two browser tabs; an in-page `#anchor` also gets
+    // forwarded to the host, which cannot resolve it). fixLinkClick already covers
+    // every link shape — real <a> in WYSIWYG/preview and the IR `[data-type="a"]`
+    // marker span — so vditor does not need to handle clicks at all.
+    link: { isOpen: false },
     // C3.8/C3.9: default to WYSIWYG mode when the user has no saved
     // preference. (Previously 'ir' — Instant Rendering — which is a
     // dual-pane source+preview while editing; visually noisy.) Users
@@ -271,6 +303,9 @@ function initVditor(msg) {
       if (!(window as any).__vmdSearch) {
         ;(window as any).__vmdSearch = initSearch()
       }
+      // Re-bind the find bar's MutationObserver: a vditor rebuild (theme change
+      // reaches here too) replaced the DOM its observer was attached to.
+      ;(window as any).__vmdSearch?.reobserve?.()
       // Auto-focus on initial open (per upstream PR #154 — credit LeonardoRick).
       vditor.focus()
       // Reveal the editor (see appVisibilityCss) only once Vditor's own
@@ -278,6 +313,7 @@ function initVditor(msg) {
       // been applied, so the very first thing the user ever sees is the
       // final state — never an intermediate, oddly-scaled toolbar or a
       // visible jump from the top to the restored position.
+      if (revealWatchdog !== undefined) clearTimeout(revealWatchdog)
       requestAnimationFrame(() => {
         document.documentElement.setAttribute('data-vmd-ready', '1')
       })

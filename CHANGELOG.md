@@ -7,6 +7,61 @@ The fork's versioning: upstream's version + `-hardened.<N>` suffix, where N is
 the fork's own counter. We bump `<N>` on each meaningful release; when upstream
 publishes a new version we re-base and bump the upstream prefix.
 
+## [Unreleased]
+
+针对上一版"跟进上游移植"代码的审查修复（三轮审查循环：独立审查 →
+独立复核 → 修复发现项）。多数缺陷是上游原样带来的，其余为本 fork
+适配时引入。
+
+### 修复
+
+- **点击链接只派发一次**（上游原样）：vditor 的 `link.isOpen` 默认为
+  true，其点击处理器调用 `window.open(href)`，且在 `preventDefault()`
+  之后不做 `stopPropagation` —— 事件继续冒泡到 document 上的
+  `fixLinkClick`，同一个链接被派发两条 `open-link`（http 链接会打开两
+  个浏览器标签页），页内锚点也被额外转发给宿主去当相对路径解析。现显
+  式关闭 vditor 的链接打开（`link: { isOpen: false }`），交由
+  `fixLinkClick` 统一处理——它已覆盖正文 `<a>`、IR 标记 span 与预览区
+  三种形态。
+- **SV 模式查找恒为 `0/0`**：vditor 把 `vditor-sv` 与 `vditor-reset`
+  两个类放在**同一个元素**上，后代选择器 `.vditor-sv .vditor-reset`
+  匹配不到；而上游固定的 IR 优先查询顺序在本 fork 的 WYSIWYG 默认模式
+  下会命中非活动的空容器。活动容器的解析现抽为共享模块
+  `media-src/src/editor-root.ts`，供查找条与锚点滚动共用。
+- **切换模式后页内锚点失效**：`scrollToHeadingAnchor` 原用全局选择器，
+  模式切换后第一个命中的是隐藏容器里的标题，`scrollIntoView` 作用在
+  `display:none` 元素上等于没有反应（TOC 点了不动）。
+- **含裸 `%` 的锚点抛未捕获异常**：`[见 100%](#100%)` 这类锚点会让
+  `decodeURIComponent` 抛 `URIError` 并从点击处理器冒出；现回退为按原
+  始片段匹配。
+- **vditor 初始化失败导致永久白屏**：vditor 的 `after()` 回调在其资源
+  加载 Promise 链内异步执行，失败无法被 webview 的 `try/catch` 捕获，
+  `data-vmd-ready` 永不设置 → `#app` 永久不可见且用户无从恢复。现增加
+  兜底：宿主脚本在 4 秒后强制揭示，webview 每次重建时重新武装该看门狗。
+- **非活动面板被空脏态事件整篇回灌**：保存与自动保存产生的
+  `contentChanges` 为空的事件，在面板非活动时会走完整回灌路径，重置阅读
+  位置与光标。现于守卫之前短路（同时保留标题刷新）。
+- **table-wrap 按钮激活态无视觉反馈**：vditor 的 `.vditor-icon--current`
+  被更高特异度的规则压过；现按 body 类自有规则着色，且在 vditor 因主题
+  变化重建后仍正确。
+- 其余：滚动位置的记录做数值校验；FOUC 门禁纳入用户自定义样式表并对计
+  数去重；`pollTimer` 的 TDZ 防御；多处注释的理由修正；`showLineNumbers`
+  的描述如实说明其与磁盘文件的偏差（vditor 重排空行所致）。
+
+### 测试
+
+- `link-click.js` 重写为**真实栈**：此前用裸 JSDOM 加手造 DOM，与真实行
+  为相反却通过（vditor 的 `link.isOpen` 路径完全不在其作用域内）。新增
+  "恰好一条消息""锚点不转发""`#100%` 不抛错""忽略隐藏容器的标题"等行
+  为断言。
+- `find-bar.js` 覆盖 wysiwyg/ir/sv 三种模式，新增 CapsLock 用例、observer
+  在 vditor 重建后重绑的用例，以及真实工具栏的 DOM 断言（此前的源码
+  grep 检不出"改了源码却未重建 bundle"）。
+- `line-numbers-modes.js` 把放宽的结构性断言改为固定真实值；
+  `line-numbers.js` 注明其 `getValue` 桩的语义边界，避免被当作"行号等于
+  源文件行号"的证据。
+- 关键修复经变异测试验证确实可被捕获（回退修复即测试失败）。
+
 ## [0.1.21-hardened.1] — 2026-09-14
 
 首个正式发布的加固版：关闭上游安全审计全部七项发现，并已同步
@@ -243,4 +298,5 @@ The currently-published Marketplace version of
 Still vulnerable to all seven audit findings (H1, H2, H3, H4, H5, H6, H9).
 
 <!-- 变更链接 -->
+[Unreleased]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.1.21-hardened.1...HEAD
 [0.1.21-hardened.1]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/commits/v0.1.21-hardened.1

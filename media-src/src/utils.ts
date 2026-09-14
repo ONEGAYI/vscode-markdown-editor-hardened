@@ -4,6 +4,7 @@ import 'jquery-confirm/css/jquery-confirm.css'
 
 import _ from 'lodash'
 import Vditor from 'vditor'
+import { getActiveEditorRoot } from './editor-root'
 window.vscode =
   (window as any).acquireVsCodeApi && (window as any).acquireVsCodeApi()
 ;(window as any).global = window
@@ -126,10 +127,24 @@ function slugifyHeading(text: string): string {
  * was found and scrolled to.
  */
 function scrollToHeadingAnchor(fragment: string): boolean {
-  const target = decodeURIComponent(fragment).toLowerCase()
-  const headings = document.querySelectorAll(
-    '.vditor-reset h1, .vditor-reset h2, .vditor-reset h3, .vditor-reset h4, .vditor-reset h5, .vditor-reset h6'
-  )
+  // A bare '%' that is not a valid escape (e.g. `[见 100%](#100%)`) makes
+  // decodeURIComponent throw URIError, which would escape this click handler and
+  // leave the anchor dead. Fall back to the literal fragment in that case.
+  let decoded = fragment
+  try {
+    decoded = decodeURIComponent(fragment)
+  } catch (_) {
+    // keep the raw fragment
+  }
+  const target = decoded.toLowerCase()
+  // Scope the search to the ACTIVE mode container. Querying the whole document
+  // matches headings inside mode containers that were active earlier and still
+  // hold their rendered children while hidden — scrollIntoView on one of those
+  // is a no-op, so in-page anchors (a table of contents, typically) appear dead
+  // after switching modes.
+  const root = getActiveEditorRoot()
+  if (!root) return false
+  const headings = root.querySelectorAll('h1, h2, h3, h4, h5, h6')
   for (const h of Array.from(headings)) {
     if (slugifyHeading(h.textContent || '') === target) {
       h.scrollIntoView({ block: 'start', behavior: 'smooth' })

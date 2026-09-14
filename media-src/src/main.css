@@ -42,6 +42,17 @@ body.vmd-table-nowrap .vditor-reset table th {
   white-space: nowrap;
   overflow-wrap: normal;
 }
+/* Active-state feedback for that button. vditor does set `.vditor-icon--current`
+   on it, but that rule (specificity 0,1,0) loses to `.vditor-toolbar__item
+   .vditor-tooltipped` and to this fork's themed
+   `.vditor-toolbar .vditor-tooltipped { … !important }` in
+   vscode-theme-bridge.css — so the toggled state was invisible.
+   Keying off the body class also survives a vditor rebuild (theme change),
+   where the class vditor set on the button is discarded while the mode is
+   still in effect. */
+body.vmd-table-nowrap .vditor-toolbar [data-type="table-wrap"] {
+  color: var(--vscode-focusBorder, #007fd4) !important;
+}
 /* ── Search bar ─────────────────────────────────────────────────────────── */
 #vmd-search-bar {
   position: fixed;

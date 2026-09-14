@@ -162,9 +162,15 @@ export async function handleWebviewMessage(message: any, session: WebviewSession
       // Upstream 9c8e962: the webview reports its scroll position on
       // every scroll (synchronously — the panel can be disposed before
       // a debounced timer would fire), so switching files and back
-      // restores the reading position. Map lives in extension.ts and is
-      // shared by both entry points.
-      scrollPositions.set(session.fileUri.fsPath, message.top || 0)
+      // restores the reading position. The map lives in
+      // src/scroll-positions.ts and is shared by both entry points.
+      // Validate the number: a NaN/negative/non-numeric value would make
+      // every restore land at the top of the document.
+      const top = Number(message.top)
+      scrollPositions.set(
+        session.fileUri.fsPath,
+        Number.isFinite(top) ? Math.max(0, top) : 0
+      )
       break
     }
     case 'info':

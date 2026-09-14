@@ -1,25 +1,28 @@
 #!/usr/bin/env node
 /**
- * Integration test — in-editor find bar (upstream dd933af, verbatim port)
+ * Integration test — in-editor find bar (upstream dd933af, fork-adapted)
  *
- * Boots the REAL stack in JSDOM (same harness pattern as
- * line-numbers-modes.js: media/dist/main.js + vditor + lute), waits for
+ * Boots the REAL stack in JSDOM (same harness as line-numbers-modes.js:
+ * media/dist/main.js + vditor + lute) for EACH editor mode, waits for
  * vditor's after() hook — which lazily builds the search bar — then:
  *
  *   1. #vmd-search-bar exists (hidden) and __vmdSearch is initialized
- *   2. Ctrl+F opens the bar (aria-hidden=false, --open class, focused)
- *   3. typing a query updates the match counter (JSDOM has no CSS
- *      Custom Highlight API — applyHighlights early-returns there, but
- *      the range-scan + counter path is fully exercised)
+ *   2. Ctrl+F opens the bar (aria-hidden=false, --open class)
+ *   3. typing a query updates the match counter
  *   4. Esc closes the bar and clears the counter
- *   5. toolbar carries the find and table-wrap buttons (40a47a9 / dd933af)
+ *
+ * All three modes are covered because the fork's getEditorRoot() adaptation
+ * has to resolve the ACTIVE container: with the WYSIWYG default, upstream's
+ * fixed IR-first order finds nothing, and SV needs its own branch (vditor
+ * puts both `vditor-sv` and `vditor-reset` on ONE element, so the descendant
+ * selector misses it) — that mode silently reported 0/0 before the fix.
  *
  * Plus a package.json/settings drift guard for defaultOpenOutline (db2062c).
  */
 
 const path = require('path');
 const fs = require('fs');
-const { JSDOM } = require('jsdom');
+const { JSDOM, VirtualConsole } = require('jsdom');
 
 const ROOT = path.join(__dirname, '..', '..');
 const VDITOR = path.join(ROOT, 'media-src', 'node_modules', '.pnpm', 'vditor@3.11.2', 'node_modules', 'vditor', 'dist');
@@ -31,17 +34,22 @@ const MD = [
   '> a quote line', '',
 ].join('\n');
 
+// 'para' appears twice in the document, so every mode must report 1/2.
+const EXPECTED_COUNT = '1/2';
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function main() {
-  const checks = [];
-  const add = (name, pass) => checks.push({ name, pass });
+async function boot(mode) {
+  const virtualConsole = new VirtualConsole();
+  const pageErrors = [];
+  virtualConsole.on('jsdomError', (err) => pageErrors.push(err));
 
   const dom = new JSDOM('<!DOCTYPE html><html><head></head><body><div id="app"></div></body></html>', {
     runScripts: 'dangerously',
     resources: 'usable',
     url: 'file://' + ROOT.replace(/\\/g, '/') + '/__find-bar-test__.html',
     pretendToBeVisual: true,
+    virtualConsole,
   });
   const { window } = dom;
   const { document } = window;
@@ -56,8 +64,6 @@ async function main() {
       configurable: true, get() { return this.textContent; }, set(v) { this.textContent = v; },
     });
   }
-  // jsdom: scrollIntoView is not implemented — search.ts wraps the call in
-  // try/catch, but stub it anyway so nothing depends on the throw path.
   window.HTMLElement.prototype.scrollIntoView = function () {};
 
   window.eval(fs.readFileSync(path.join(ROOT, 'media', 'vditor', 'dist', 'js', 'lute', 'lute.min.js'), 'utf8'));
@@ -76,7 +82,7 @@ async function main() {
           window.dispatchEvent(new window.MessageEvent('message', {
             data: {
               command: 'update', type: 'init', content: MD,
-              options: { useVscodeThemeColor: true, mode: 'wysiwyg' },
+              options: { useVscodeThemeColor: true, mode },
               theme: 'dark',
             },
           }));
@@ -91,17 +97,28 @@ async function main() {
   window.console = Object.fromEntries(['log', 'info', 'warn', 'error'].map((k) => [k, () => {}]));
   window.eval(fs.readFileSync(MAIN_BUNDLE, 'utf8'));
 
-  // wait for vditor init + after() (search bar is built there)
   let booted = false;
   for (let i = 0; i < 40; i++) {
     await sleep(250);
-    if (window.__vmdSearch && document.getElementById('vmd-search-bar')) { booted = true; break; }
+    if (window.__vmdSearch && document.getElementById('vmd-search-bar')) {
+      const current = window.vditor && window.vditor.getCurrentMode && window.vditor.getCurrentMode();
+      if (current === mode) { booted = true; break; }
+    }
   }
-  add('real stack booted (vditor + search bar built)', booted);
-  if (!booted) {
-    finish(checks);
-    return;
-  }
+  return { window, document, pageErrors, booted };
+}
+
+async function testMode(mode, checks) {
+  const add = (name, pass) => checks.push({ name: `[${mode}] ${name}`, pass });
+  const { window, document, pageErrors, booted } = await boot(mode);
+  add('real stack boots in this mode', booted);
+  if (!booted) return;
+
+  // Let initSearch()'s one-shot 1000ms observeRoot() timer fire FIRST, so it
+  // binds the container that is current now. Otherwise it lands after the
+  // rebuild below and binds the new container, hiding whether the explicit
+  // re-binding paths work at all.
+  await sleep(1600);
 
   const bar = document.getElementById('vmd-search-bar');
   const input = document.getElementById('vmd-search-input');
@@ -109,7 +126,6 @@ async function main() {
 
   add('bar hidden initially (aria-hidden=true)', bar.getAttribute('aria-hidden') === 'true');
 
-  // Ctrl+F opens
   document.dispatchEvent(new window.KeyboardEvent('keydown', {
     key: 'f', ctrlKey: true, bubbles: true, cancelable: true,
   }));
@@ -119,19 +135,63 @@ async function main() {
     bar.classList.contains('vmd-search-bar--open') && bar.getAttribute('aria-hidden') === 'false'
   );
 
-  // typing a query updates the counter — 'para' matches para line1+line2 = 2
+  // CapsLock-held Ctrl+F: the key is reported as 'F'
+  document.dispatchEvent(new window.KeyboardEvent('keydown', {
+    key: 'Escape', bubbles: true, cancelable: true,
+  }));
+  input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await sleep(20);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', {
+    key: 'F', ctrlKey: true, bubbles: true, cancelable: true,
+  }));
+  await sleep(30);
+  add('uppercase Ctrl+F (CapsLock) also opens the bar', bar.classList.contains('vmd-search-bar--open'));
+
   input.value = 'para';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   await sleep(30);
-  add(`counter shows matches (got "${count.textContent}", want "1/2")`, count.textContent === '1/2');
+  add(
+    `counter shows matches in this mode (got "${count.textContent}", want "${EXPECTED_COUNT}")`,
+    count.textContent === EXPECTED_COUNT
+  );
 
-  // no-match count
   input.value = 'zzzz-no-such-text';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   await sleep(30);
   add(`no-match shows 0/0 (got "${count.textContent}")`, count.textContent === '0/0');
 
-  // Esc closes and clears
+  // Observer re-binding across a vditor rebuild (theme change). Run while the
+  // bar is still OPEN, and deliberately WITHOUT a query set during the rebuild:
+  // the observer's refresh condition requires input.value, so an empty query
+  // keeps the rebuild's DOM churn from firing runSearch() — which would rebind
+  // as a side effect and mask whether after()'s reobserve() ran. The query is
+  // then set WITHOUT dispatching an input event, so only the observer can
+  // change the counter.
+  if (mode === 'wysiwyg') {
+    input.value = '';
+    window.dispatchEvent(new window.MessageEvent('message', {
+      data: {
+        command: 'update', type: 'init', content: MD.replace('para line2', 'para line2\n\npara line3'),
+        options: { useVscodeThemeColor: true, mode },
+        theme: 'light',
+      },
+    }));
+    await sleep(3000); // let vditor destroy + rebuild
+    input.value = 'para'; // 3 occurrences in the rebuilt doc, 4 after the mutation
+    // Mutate the NEW active container: only an observer re-bound to it sees this.
+    const freshRoot = document.querySelector('.vditor-wysiwyg .vditor-reset');
+    if (freshRoot) {
+      const p = document.createElement('p');
+      p.textContent = 'para line4';
+      freshRoot.appendChild(p);
+    }
+    await sleep(700); // observer debounce is 300ms
+    add(
+      `observer re-binds after a vditor rebuild (counter got "${count.textContent}", want "1/4")`,
+      count.textContent === '1/4'
+    );
+  }
+
   input.dispatchEvent(new window.KeyboardEvent('keydown', {
     key: 'Escape', bubbles: true, cancelable: true,
   }));
@@ -141,12 +201,40 @@ async function main() {
     !bar.classList.contains('vmd-search-bar--open') && count.textContent === ''
   );
 
-  // toolbar buttons (dd933af find + 40a47a9 table-wrap)
-  const toolbarBtns = Array.from(document.querySelectorAll('.vditor-toolbar button'));
-  add('toolbar has find button', toolbarBtns.some((b) => b.getAttribute('data-type') === 'find'));
-  add('toolbar has table-wrap button', toolbarBtns.some((b) => b.getAttribute('data-type') === 'table-wrap'));
+  add(`no page errors during search (${pageErrors.map((e) => e.message).join(' | ') || 'none'})`, pageErrors.length === 0);
 
-  // drift guards (db2062c)
+  // Toolbar buttons must be verified against the REAL rendered toolbar, not the
+  // source text: media/dist/main.js is committed, so a source edit that was
+  // never rebuilt would slip past a grep-based check.
+  if (mode === 'wysiwyg') {
+    const types = Array.from(document.querySelectorAll('.vditor-toolbar [data-type]'))
+      .map((b) => b.getAttribute('data-type'));
+    add(`real toolbar exposes the find button (got [${types.join(',')}])`, types.includes('find'));
+    add('real toolbar exposes the table-wrap button', types.includes('table-wrap'));
+  }
+
+  window.close();
+}
+
+async function main() {
+  const checks = [];
+  const add = (name, pass) => checks.push({ name, pass });
+
+  for (const mode of ['wysiwyg', 'ir', 'sv']) {
+    try {
+      await testMode(mode, checks);
+    } catch (e) {
+      add(`[${mode}] test crashed: ${e.message}`, false);
+    }
+  }
+
+  // ---- toolbar buttons: source-level drift guard (the DOM assertion runs
+  //      inside testMode against the real rendered toolbar) ----
+  const src = fs.readFileSync(path.join(ROOT, 'media-src', 'src', 'toolbar.ts'), 'utf8');
+  add('[toolbar] find button declared in source', src.includes("name: 'find'"));
+  add('[toolbar] table-wrap button declared in source', src.includes("name: 'table-wrap'"));
+
+  // ---- drift guards (db2062c) ----
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   add(
     'package.json declares defaultOpenOutline',
@@ -155,10 +243,6 @@ async function main() {
   const dispatcherSrc = fs.readFileSync(path.join(ROOT, 'src', 'webview', 'message-dispatcher.ts'), 'utf8');
   add('dispatcher wires outline.enable from setting', dispatcherSrc.includes('defaultOpenOutline'));
 
-  finish(checks);
-}
-
-function finish(checks) {
   let failures = 0;
   console.log('[find-bar] checks:');
   for (const c of checks) {
