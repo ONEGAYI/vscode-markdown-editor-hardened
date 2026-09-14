@@ -98,6 +98,22 @@ const BLOCK_TAGS = [
 ];
 const EXPECTED_STARTS = [1, 5, 7, 10, 13, 17, 21];
 
+/**
+ * Drift regression (upstream 9b4f158): after an edit changes the
+ * block-start line numbers, the gutter must follow on its next poll.
+ * MD2 inserts two blank lines after the frontmatter, shifting every
+ * block below it down by 2 (H1 5->7, para 7->9, ul 10->12, code
+ * 13->15, table 17->19, quote 21->23); frontmatter stays at 1.
+ * With the old __setOrigContent snapshot this test fails: the
+ * snapshot never refreshes, so the gutter keeps the stale numbers.
+ */
+const MD2 = (() => {
+  const lines = MD.split('\n');
+  lines.splice(4, 0, '', '');
+  return lines.join('\n');
+})();
+const EXPECTED_STARTS_AFTER_EDIT = [1, 7, 9, 12, 15, 19, 23];
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
@@ -106,9 +122,14 @@ async function main() {
   const html = lineNumberScript('test-nonce');
 
   // --- sanity: the injected HTML carries the gutter machinery ---
+  // Upstream 9b4f158: the gutter reads the LIVE vditor value, not a
+  // startup-only __setOrigContent snapshot (which drifted out of sync
+  // with the rendered blocks after any edit). Assert both halves of
+  // that contract.
   const preChecks = [
     { name: 'script carries ln-gutter style', pass: html.includes('#ln-gutter') },
-    { name: 'script listens for __setOrigContent', pass: html.includes('__setOrigContent') },
+    { name: 'script reads live vditor.getValue()', pass: html.includes('vditor.getValue') },
+    { name: 'script no longer references __setOrigContent', pass: !html.includes('__setOrigContent') },
   ];
 
   // --- build the vditor-like DOM ---
@@ -155,10 +176,10 @@ async function main() {
   const scriptBody = html.replace(/^[\s\S]*?<script[^>]*>/, '').replace(/<\/script>$/, '');
   window.eval(scriptBody);
 
-  // --- host posts the original source, as message-dispatcher does on 'ready' ---
-  window.dispatchEvent(
-    new window.MessageEvent('message', { data: { command: '__setOrigContent', content: MD } })
-  );
+  // --- seed the live editor value the script reads (vditor.getValue,
+  //     per upstream 9b4f158 — replaces the old __setOrigContent post) ---
+  let liveValue = MD;
+  window.vditor = { getValue: () => liveValue, getCurrentMode: () => 'wysiwyg' };
 
   // --- let the 500ms polling interval run at least once ---
   await sleep(700);
@@ -178,6 +199,19 @@ async function main() {
   checks.push({
     name: `numbers map to source lines (got [${numbers}], want [${EXPECTED_STARTS}])`,
     pass: numbers.length === EXPECTED_STARTS.length && numbers.every((n, i) => Number(n) === EXPECTED_STARTS[i]),
+  });
+
+  // --- drift regression: edit the document, numbers must follow (9b4f158) ---
+  liveValue = MD2;
+  await sleep(650);
+  // re-query: sync() replaces the gutter's children wholesale (innerHTML)
+  const lnsAfterEdit = gutter ? Array.from(gutter.querySelectorAll('.ln')) : [];
+  const numbersAfterEdit = lnsAfterEdit.map((n) => n.textContent.trim());
+  checks.push({
+    name: `numbers follow edits - no drift (got [${numbersAfterEdit}], want [${EXPECTED_STARTS_AFTER_EDIT}])`,
+    pass:
+      numbersAfterEdit.length === EXPECTED_STARTS_AFTER_EDIT.length &&
+      numbersAfterEdit.every((n, i) => Number(n) === EXPECTED_STARTS_AFTER_EDIT[i]),
   });
 
   // --- toggle behavior: hide, then restore ---

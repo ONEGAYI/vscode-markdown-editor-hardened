@@ -2,6 +2,7 @@ import * as vscode from 'vscode'
 import * as NodePath from 'path'
 import { validateWorkspaceRelativePath } from './security/path-validation'
 import { handleWebviewMessage, WebviewSession } from './webview/message-dispatcher'
+import { scrollPositions } from './scroll-positions'
 const KeyVditorOptions = 'vditor.options'
 
 function debug(...args: any[]) {
@@ -10,6 +11,27 @@ function debug(...args: any[]) {
 
 function showError(msg: string) {
   vscode.window.showErrorMessage(`[markdown-editor-hardened] ${msg}`)
+}
+
+/**
+ * True when a document change came from disk rather than from the webview
+ * (upstream 10870ac + 651b300, adapted).
+ *
+ * Webview edits reach the document through applyEdit and always leave it
+ * dirty, so a content change that leaves the document clean can only be
+ * VS Code reloading a file that another program wrote. That also means
+ * there is no pending webview edit to clobber: if the webview had
+ * unsynced content, the document would still be dirty.
+ *
+ * The contentChanges check matters: onDidChangeTextDocument also fires for
+ * pure dirty-state transitions with an empty contentChanges array, so
+ * every save (incl. autosave) emits a clean-document event that must not
+ * be mistaken for a reload — otherwise typing with autosave on would
+ * push the full document back into the webview every few seconds and
+ * reset the editor/cursor.
+ */
+function isExternalReload(e: vscode.TextDocumentChangeEvent) {
+  return e.contentChanges.length > 0 && !e.document.isDirty
 }
 
 /**
@@ -337,10 +359,27 @@ class EditorPanel {
    * (we rely on `style-src 'unsafe-inline'` — same trade-off as the
    * rest of vditor's dynamic style injection).
    *
-   * The script reads `window.__lnOrig` (set by the host via the
-   * `__setOrigContent` message on `ready`) to map rendered blocks back
-   * to source line numbers. It observes vditor's DOM mutations and
-   * keeps the gutter in sync; toggles via a `#` toolbar button.
+   * The script reads the LIVE editor value (`vditor.getValue()`) to map
+   * rendered blocks back to source line numbers (upstream 9b4f158 — a
+   * startup-only `__setOrigContent` snapshot drifted out of sync with
+   * the rendered blocks as soon as the document was edited). It
+   * observes vditor's DOM mutations and keeps the gutter in sync;
+   * toggles via a `#` toolbar button.
+   *
+   * MODE FIX (toggle-line-numbers-dead bug): vditor 3.11 keeps ALL
+   * THREE mode containers (.vditor-wysiwyg, .vditor-sv, .vditor-ir) in
+   * the DOM at once; only the active one is displayed and holds
+   * rendered block children. A bare document.querySelector returns the
+   * first container in document order (.vditor-wysiwyg) regardless of
+   * the active mode, so for users whose saved mode is 'ir' (the old
+   * default, persisted in globalState) or 'sv' the script measured a
+   * hidden empty container, the gutter was never created, and the `#`
+   * toggle button did nothing (its handler only flips display on an
+   * #ln-gutter that never exists). `pick()` below resolves the ACTIVE
+   * mode's container via vditor.getCurrentMode(), with a "container
+   * that actually has block children" fallback. SV (source-split) mode
+   * has no block editing surface and remains unsupported — the script
+   * simply no-ops there.
    *
    * Long term (DC12 / T3): move this script into media-src/main.ts so
    * the bundle owns the logic and no inline script is needed. For now,
@@ -355,12 +394,26 @@ class EditorPanel {
 </style>
 <script nonce="${nonce}">
 (function(){
-  window.__lnOrig='';
   window.__lnEnabled=true;
-  window.addEventListener('message',function(e){
-    if(e.data&&e.data.command==='__setOrigContent'){window.__lnOrig=e.data.content||''}
-  });
   var listening=false;
+  var listenedIr=null,obs=null,observedReset=null;
+  function pick(){
+    var mode=null;
+    try{if(window.vditor&&window.vditor.getCurrentMode)mode=window.vditor.getCurrentMode()}catch(e){}
+    var ir=null,reset=null;
+    if(mode==='ir'||mode==='wysiwyg'||mode==='sv'){
+      ir=document.querySelector('.vditor-'+mode);
+      if(ir)reset=ir.querySelector('.vditor-reset');
+    }
+    if(!reset||!ir||reset.children.length===0){
+      var list=document.querySelectorAll('.vditor-ir,.vditor-wysiwyg,.vditor-sv');
+      for(var k=0;k<list.length;k++){
+        var r=list[k].querySelector('.vditor-reset');
+        if(r&&r.children.length>0){ir=list[k];reset=r;break}
+      }
+    }
+    return {ir:ir,reset:reset};
+  }
   function addToggle(){
     if(document.getElementById('ln-toggle'))return;
     var tb=document.querySelector('.vditor-toolbar');
@@ -377,8 +430,8 @@ class EditorPanel {
       btn.style.opacity=window.__lnEnabled?'0.7':'0.3';
       var g=document.getElementById('ln-gutter');
       if(g)g.style.display=window.__lnEnabled?'':'none';
-      var r=document.querySelector('.vditor-ir .vditor-reset,.vditor-wysiwyg .vditor-reset,.vditor-sv .vditor-reset');
-      if(r)r.style.setProperty('padding-left',window.__lnEnabled?'60px':'35px','important');
+      var pk=pick();
+      if(pk.reset)pk.reset.style.setProperty('padding-left',window.__lnEnabled?'60px':'35px','important');
       if(tb)tb.style.setProperty('padding-left',window.__lnEnabled?'60px':'35px','important');
     };
     tb.appendChild(btn);
@@ -386,8 +439,9 @@ class EditorPanel {
   function sync(){
     addToggle();
     if(!window.__lnEnabled)return;
-    var reset=document.querySelector('.vditor-ir .vditor-reset,.vditor-wysiwyg .vditor-reset,.vditor-sv .vditor-reset');
-    var ir=document.querySelector('.vditor-ir,.vditor-wysiwyg,.vditor-sv');
+    var pk=pick();
+    var reset=pk.reset;
+    var ir=pk.ir;
     if(!reset||!ir||reset.children.length===0) return;
     var g=document.getElementById('ln-gutter');
     if(!g){g=document.createElement('div');g.id='ln-gutter';document.body.appendChild(g)}
@@ -402,7 +456,10 @@ class EditorPanel {
     }
     var srcLines=[];
     try{
-      var src=window.__lnOrig||'';
+      // Always read the live editor value instead of a snapshot received once at
+      // startup: a stale snapshot drifts out of sync with the rendered blocks as
+      // soon as the document is edited, producing wrong line numbers.
+      var src=(window.vditor&&window.vditor.getValue)?(window.vditor.getValue()||''):'';
       var NL=String.fromCharCode(10);
       var L=src.split(NL);
       var starts=[];
@@ -455,9 +512,17 @@ class EditorPanel {
     g.innerHTML=html;
     if(!listening){
       listening=true;
-      ir.addEventListener('scroll',sync);
       document.addEventListener('scroll',sync,true);
-      new MutationObserver(function(){requestAnimationFrame(sync)}).observe(reset,{childList:true,subtree:true,characterData:true});
+    }
+    if(listenedIr!==ir){
+      ir.addEventListener('scroll',sync);
+      listenedIr=ir;
+    }
+    if(observedReset!==reset){
+      if(obs)obs.disconnect();
+      obs=new MutationObserver(function(){requestAnimationFrame(sync)});
+      obs.observe(reset,{childList:true,subtree:true,characterData:true});
+      observedReset=reset;
     }
   }
   setInterval(sync,500);
@@ -507,9 +572,12 @@ class EditorPanel {
       if (e.document.fileName !== this._document.fileName) {
         return
       }
-      // When webview panel is active, do not sync updates from VS Code editor caused by webview edits back to webview
-      // don't change webview panel when webview panel is focus
-      if (this._panel.active) {
+      // Don't echo the webview's own edits back at it, but always take a
+      // change that came from disk (upstream 10870ac): the panel stays
+      // "active" while VS Code has lost OS focus to another program —
+      // exactly when external edits happen — so an `active`-only guard
+      // dropped every external edit until the tab was reopened.
+      if (this._panel.active && !isExternalReload(e)) {
         return
       }
       textEditTimer && clearTimeout(textEditTimer)
@@ -611,6 +679,11 @@ class EditorPanel {
     this._panel.webview.postMessage({
       command: 'update',
       content: md,
+      // Upstream 9c8e962: restore the remembered reading position on
+      // (re)init — the webview is disposed/recreated per file switch.
+      ...(props.type === 'init'
+        ? { scrollTop: scrollPositions.get(this._fsPath) || 0 }
+        : {}),
       ...props,
     })
   }
@@ -664,8 +737,29 @@ class EditorPanel {
 				<base href="${baseHref}" />
 
 
-				${CssFiles.map((f) => `<link href="${f}" rel="stylesheet">`).join('\n')}
+				<style>#app{opacity:0}html[data-vmd-ready="1"][data-vmd-css-loaded="1"] #app{opacity:1}</style>
+				${CssFiles.map((f) => `<link href="${f}" rel="stylesheet" data-vmd-css="1">`).join('\n')}
 				${customStylesheetLink}
+				<script nonce="${nonce}">
+					// CSP adaptation of upstream 9c8e962's onload= attributes:
+					// inline event handlers are blocked by script-src 'nonce-…',
+					// so wire the load handlers from this nonce-gated script.
+					// Sets html[data-vmd-css-loaded] which, together with
+					// html[data-vmd-ready] (set from main.ts once Vditor is up
+					// and the saved scroll position applied), reveals #app.
+					(function(){
+						var links=document.querySelectorAll('link[data-vmd-css="1"]');
+						var finish=function(){document.documentElement.setAttribute('data-vmd-css-loaded','1')};
+						if(!links.length){finish();return}
+						var count=0;
+						var fin=function(){count++;if(count>=links.length)finish()};
+						for(var i=0;i<links.length;i++){
+							var l=links[i];
+							l.onload=fin;l.onerror=fin;
+							if(l.sheet)fin();
+						}
+					})();
+				</script>
 
 				<title>markdown editor</title>
 			</head>
@@ -729,6 +823,11 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       webviewPanel.webview.postMessage({
         command: 'update',
         content: document.getText(),
+        // Upstream 9c8e962: restore the remembered reading position on
+        // (re)init — the webview is disposed/recreated per file switch.
+        ...(props.type === 'init'
+          ? { scrollTop: scrollPositions.get(uri.fsPath) || 0 }
+          : {}),
         ...props,
       })
     }
@@ -745,8 +844,9 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
       if (e.document.fileName !== document.fileName) {
         return
       }
-      // Do not sync when webview panel is active (avoid circular updates)
-      if (webviewPanel.active) {
+      // Don't echo the webview's own edits back at it, but always take a
+      // change that came from disk - see isExternalReload (upstream 10870ac).
+      if (webviewPanel.active && !isExternalReload(e)) {
         return
       }
       updateWebview()
@@ -831,8 +931,29 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 				<base href="${baseHref}" />
 
 
-				${CssFiles.map((f) => `<link href="${f}" rel="stylesheet">`).join('\n')}
+				<style>#app{opacity:0}html[data-vmd-ready="1"][data-vmd-css-loaded="1"] #app{opacity:1}</style>
+				${CssFiles.map((f) => `<link href="${f}" rel="stylesheet" data-vmd-css="1">`).join('\n')}
 				${customStylesheetLink}
+				<script nonce="${nonce}">
+					// CSP adaptation of upstream 9c8e962's onload= attributes:
+					// inline event handlers are blocked by script-src 'nonce-…',
+					// so wire the load handlers from this nonce-gated script.
+					// Sets html[data-vmd-css-loaded] which, together with
+					// html[data-vmd-ready] (set from main.ts once Vditor is up
+					// and the saved scroll position applied), reveals #app.
+					(function(){
+						var links=document.querySelectorAll('link[data-vmd-css="1"]');
+						var finish=function(){document.documentElement.setAttribute('data-vmd-css-loaded','1')};
+						if(!links.length){finish();return}
+						var count=0;
+						var fin=function(){count++;if(count>=links.length)finish()};
+						for(var i=0;i<links.length;i++){
+							var l=links[i];
+							l.onload=fin;l.onerror=fin;
+							if(l.sheet)fin();
+						}
+					})();
+				</script>
 
 				<title>markdown editor</title>
 			</head>

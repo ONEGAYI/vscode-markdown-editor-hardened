@@ -29,7 +29,7 @@
  *       document or file)
  *     - upload validation + write loop (DC5 / H4)
  *     - open-link validation + dispatch (DC6 / H5)
- *     - the `__setOrigContent` post on `ready` (PR #157 line numbers)
+ *     - scroll-position persistence (upstream 9c8e962)
  *
  * INV3 (no NEW vulns from the refactor):
  *   The extracted code is byte-equivalent in behavior to the two prior
@@ -42,6 +42,7 @@ import * as vscode from 'vscode'
 import * as NodePath from 'path'
 import { validateUploadEntries } from '../upload-validation'
 import { validateOpenLinkUrl } from '../security/path-validation'
+import { scrollPositions } from '../scroll-positions'
 
 const KeyVditorOptions = 'vditor.options'
 
@@ -130,11 +131,11 @@ export async function handleWebviewMessage(message: any, session: WebviewSession
 
   switch (message.command) {
     case 'ready': {
-      // PR #157 line-numbers (asalcedo29): post the document's ORIGINAL
-      // source to the webview so the line-number gutter can map blocks
-      // back to source line numbers.
-      const md = session.document ? session.document.getText() : ''
-      session.webview.postMessage({ command: '__setOrigContent', content: md })
+      // PR #157 line numbers (asalcedo29): the gutter used to need a
+      // one-off `__setOrigContent` snapshot of the document here; it now
+      // reads the live `vditor.getValue()` directly (upstream 9b4f158 —
+      // a startup-only snapshot drifted out of sync with the rendered
+      // blocks as soon as the document was edited).
       await session.postUpdate({
         type: 'init',
         options: {
@@ -152,6 +153,15 @@ export async function handleWebviewMessage(message: any, session: WebviewSession
     case 'save-options':
       session.context.globalState.update(KeyVditorOptions, message.options)
       break
+    case 'scroll': {
+      // Upstream 9c8e962: the webview reports its scroll position on
+      // every scroll (synchronously — the panel can be disposed before
+      // a debounced timer would fire), so switching files and back
+      // restores the reading position. Map lives in extension.ts and is
+      // shared by both entry points.
+      scrollPositions.set(session.fileUri.fsPath, message.top || 0)
+      break
+    }
     case 'info':
       vscode.window.showInformationMessage(message.content)
       break
@@ -227,6 +237,24 @@ export async function handleWebviewMessage(message: any, session: WebviewSession
         break
       }
       if (result.kind === 'file') {
+        // Upstream 9b6f3f8: stat the resolved target first — a directory
+        // opens in the OS file explorer (revealInExplorer), a missing
+        // target is dropped silently (vscode.open would surface a modal
+        // error for what is usually a typo'd relative link).
+        let fileStat: vscode.FileStat | undefined
+        try {
+          fileStat = await vscode.workspace.fs.stat(vscode.Uri.file(result.resolvedFsPath))
+        } catch {
+          debug('open-link: target missing', { href: message.href, path: result.resolvedFsPath })
+          break
+        }
+        if (fileStat.type === vscode.FileType.Directory) {
+          await vscode.commands.executeCommand(
+            'revealInExplorer',
+            vscode.Uri.file(result.resolvedFsPath)
+          )
+          break
+        }
         vscode.commands.executeCommand('vscode.open', vscode.Uri.file(result.resolvedFsPath))
       } else {
         // http, https, mailto — pass the validated URL string through.
