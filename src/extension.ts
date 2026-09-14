@@ -562,6 +562,12 @@ class EditorPanel {
           showLineNumbers: EditorPanel.config.get<boolean>(
             'showLineNumbers'
           ),
+          // Upstream db2062c: defaultOpenOutline — keep in sync with the
+          // option assembly in message-dispatcher.ts ('ready').
+          outline: {
+            enable:
+              EditorPanel.config.get<boolean>('defaultOpenOutline') === true,
+          },
           ...this._context.globalState.get(KeyVditorOptions),
         },
         theme: theme.kind === vscode.ColorThemeKind.Dark ? 'dark' : 'light',
@@ -878,13 +884,18 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     })
   }
 
-  private getWebviewOptions(fileUri?: vscode.Uri): vscode.WebviewOptions {
+  private getWebviewOptions(fileUri?: vscode.Uri): vscode.WebviewOptions & vscode.WebviewPanelOptions {
     return {
       enableScripts: true,
       // SECURITY (DC3, closes H1 — over-broad localResourceRoots):
       //   See `scopedLocalResourceRoots` doc + EditorPanel.getWebviewOptions
       //   for the rationale. Same scope policy as the command-mode panel.
       localResourceRoots: scopedLocalResourceRoots(this.context.extensionUri, fileUri),
+      // Upstream dd933af: keep webview state when the tab is hidden
+      // (scroll position, find bar), and offer VS Code's native find
+      // widget alongside the in-editor find bar (media-src/src/search.ts).
+      retainContextWhenHidden: true,
+      enableFindWidget: true,
     }
   }
 

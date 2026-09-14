@@ -17,6 +17,7 @@ import 'vditor/dist/index.css'
 import { t, lang } from './lang'
 import { toolbar } from './toolbar'
 import { fixTableIr } from './fix-table-ir'
+import { initSearch } from './search'
 import './main.css'
 // C3.5/C3.6/C3.7: vscode-theme-bridge.css maps vditor's selectors to
 // VS Code's --vscode-* CSS variables so the editor aligns with the
@@ -266,6 +267,10 @@ function initVditor(msg) {
       fixPanelHover()
       trackScrollPosition()
       restoreScrollPosition(msg.scrollTop)
+      // Initialize search bar once (idempotent across vditor re-inits)
+      if (!(window as any).__vmdSearch) {
+        ;(window as any).__vmdSearch = initSearch()
+      }
       // Auto-focus on initial open (per upstream PR #154 — credit LeonardoRick).
       vditor.focus()
       // Reveal the editor (see appVisibilityCss) only once Vditor's own

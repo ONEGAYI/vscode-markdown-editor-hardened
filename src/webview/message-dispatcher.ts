@@ -141,6 +141,11 @@ export async function handleWebviewMessage(message: any, session: WebviewSession
         options: {
           useVscodeThemeColor: configGet<boolean>('useVscodeThemeColor'),
           showLineNumbers: configGet<boolean>('showLineNumbers'),
+          // Upstream db2062c: open vditor's outline panel by default
+          // when the user opted in via the defaultOpenOutline setting.
+          outline: {
+            enable: configGet<boolean>('defaultOpenOutline') === true,
+          },
           ...session.context.globalState.get(KeyVditorOptions),
         },
         theme:

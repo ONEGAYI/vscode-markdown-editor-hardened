@@ -83,6 +83,67 @@ candidate. All seven findings from the upstream audit are closed.
   for CSP (the inline `<script>` is nonce-gated per-render). Adopts upstream
   PR #157. Credit asalcedo29. (C1.18)
 
+### Synced from upstream (fork base e78e49c → upstream 0.1.21)
+
+All genuinely-missing upstream changes between the fork base and
+upstream `main@033c624` were ported in two batches, adapted to this
+fork's CSP, security validators, and MessageDispatcher structure.
+Upstream version bumps / CI / publish chores were not taken; the merge
+base is reconciled separately (merge -s ours).
+
+Batch 1 — fixes:
+
+- **Local & relative links** (upstream 9b6f3f8): the webview now sends
+  the RAW `href` attribute (the old `el.href` was resolved against the
+  webview's internal origin, mangling relative links) and detects
+  clicks on nested elements via `closest('a')`. The host stats the
+  validated target: directories open in the OS file explorer,
+  missing files are dropped silently. Scheme allowlist +
+  workspace containment kept (stricter than upstream, by design).
+- **TOC / in-page anchors** (upstream c5ccb4d): IR-mode pseudo-links
+  (`[data-type="a"]` marker spans) dispatch too; `#anchor` links
+  resolve locally against a GitHub-style heading slug and scroll —
+  never forwarded to the host.
+- **Line-number drift** (upstream 9b4f158): the gutter reads the live
+  `vditor.getValue()` instead of a startup-only `__setOrigContent`
+  snapshot; the snapshot plumbing is gone.
+- **Scroll position + FOUC** (upstream 9c8e962): reading position
+  survives file switches (shared `fsPath -> scrollTop` map, restore
+  polls through async resizes and backs off on real user input,
+  `overflow-anchor` disabled). `#app` stays hidden until main.css has
+  loaded AND vditor is ready + scroll applied — CSP-adapted: load
+  handlers wired from a nonce'd script instead of inline `onload=`
+  attributes, reveal attributes on `<html>`, visibility rule inlined
+  literally (keeps poc-h3's no-style-interpolation invariant).
+- **Full editor width** (upstream c32c0e0): `.vditor-reset` gains
+  `padding-right: 35px` mirroring the left override, so wide viewports
+  no longer keep vditor's computed centering gap.
+- **External file changes** (upstream 10870ac + 651b300): document
+  changes are discriminated by origin (`contentChanges > 0 && !dirty`
+  = disk reload) instead of panel focus — external edits sync while
+  the tab is focused; saves/autosave no longer misread as reloads.
+
+Batch 2 — features:
+
+- **In-editor find bar** (upstream dd933af): Ctrl+F floating bar,
+  CSS Custom Highlight API (no DOM mutation), match counter,
+  case toggle, prev/next, Esc to close; toolbar Find button.
+  FORK ADAPTATION: `getEditorRoot()` resolves the ACTIVE mode's
+  container first — upstream's IR-first order returns the inactive
+  (empty) IR container under our WYSIWYG default, finding nothing.
+- **Table cell wrapping** (upstream 40a47a9, PR #172): cells wrap like
+  VS Code's preview instead of forcing nowrap/horizontal scroll;
+  toolbar button toggles the original behavior for the session.
+- **Open outline by default** (upstream db2062c): new setting
+  `markdown-editor-hardened.defaultOpenOutline` (default false).
+- Custom-editor path now also sets `enableFindWidget` +
+  `retainContextWhenHidden` (command-mode panel already had them).
+
+Tests added for both batches: `tests/integration/link-click.js`
+(16 checks) and `tests/integration/find-bar.js` (10 checks, real-stack
+boot). `line-numbers*.js` re-targeted to the live-value contract with
+a drift regression. Suite: 12/12 PASS.
+
 ### Fixed
 
 - **Line-number gutter dead outside WYSIWYG mode (the `#` toggle did
@@ -110,7 +171,8 @@ candidate. All seven findings from the upstream audit are closed.
 - Settings keys: `markdown-editor.*` → `markdown-editor-hardened.*`
 - Removed setting: `markdown-editor.customCss` (security vector; see H3)
 - New settings: `markdown-editor-hardened.customStylesheet` (workspace-relative
-  CSS path), `markdown-editor-hardened.showLineNumbers` (boolean)
+  CSS path), `markdown-editor-hardened.showLineNumbers` (boolean),
+  `markdown-editor-hardened.defaultOpenOutline` (boolean)
 - Keybinding unchanged: `cmd+shift+alt+m` (Mac) / `ctrl+shift+alt+m` (other)
 
 ### Tests
