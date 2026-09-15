@@ -327,9 +327,10 @@ function positionEditOverlay(editPre: HTMLPreElement, overlay: HTMLElement) {
   overlay.style.width = r.width + 'px'
   // Re-rendering the overlay's content (innerHTML/textContent) clamps its
   // scrollLeft back to 0 — while editing a horizontally-scrolled long line,
-  // the mirror would jump to the line start on every render until the next
-  // scroll event. Re-sync it on every pin.
-  overlay.scrollLeft = editPre.scrollLeft
+  // the mirror would jump to the line start on every render. The scrolling
+  // ELEMENT is the <code> (vditor styles `pre > code` with overflow:auto;
+  // the <pre> itself stays overflow:visible and always reads 0).
+  overlay.scrollLeft = code.scrollLeft
 }
 
 /** The editing state of one block: the class drives the shell-preserving
@@ -594,16 +595,17 @@ export function installCodeBlockEnhancer() {
       }
       scheduleMirrorRender(editPre)
     }, true)
-    document.addEventListener('scroll', (e) => {
+    document.addEventListener('scroll', () => {
       // Cheap early-out: nothing to re-pin when no mirror is live.
       if (!document.querySelector('body > .vmd-cb-edit-hl')) return
       for (const p of Array.from(document.querySelectorAll('pre.vditor-wysiwyg__pre'))) {
         if (!isEditingPre(p)) continue
         const ov = (p.parentElement as any)?.__vmdOverlay as HTMLElement | undefined
         if (!ov || !ov.isConnected) continue
+        // positionEditOverlay also re-syncs the horizontal scroll from the
+        // <code> (the actual scrolling element) — covers both the page-wide
+        // re-pin and horizontal scrolling inside the editing block itself.
         positionEditOverlay(p as HTMLPreElement, ov)
-        // horizontal scrolling inside the editing pre itself
-        if (e.target === p) ov.scrollLeft = (p as HTMLElement).scrollLeft
       }
     }, true)
 
