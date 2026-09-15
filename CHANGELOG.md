@@ -13,6 +13,38 @@ dropped.
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-09-15
+
+编辑中的代码块获得与预览一致的语法高亮镜像，图表块（mermaid 等）
+获得专用编辑入口，并修复编辑面的几何与光标落点问题。基点对账：
+上游基点仍为 upstream main@033c624，无上游变更。
+
+### 新功能
+
+- **编辑中保持语法高亮**（PR #5）：wysiwyg 编辑代码块时不再退化为
+  素码——编辑文字转为透明（光标与选区保持可见），一个对齐的高亮
+  层随每次输入防抖重绘，横向滚动同步跟随；每个编辑块独立镜像，
+  块间切换、IME 组词、vditor 每键重建等场景均保持稳定。
+- **图表块专用编辑入口**（PR #5）：mermaid 等图表的渲染图不再
+  "点击即进编辑"（此前复制渲染文字会高频误触），悬停时右上角浮现
+  `</>` 按钮是唯一编辑入口；编辑态与其他代码块一致（工具栏 + 素码
+  镜像），复制按钮取 fence 源码而非图形文字。
+- **点击编辑光标落点击行**（PR #5）：点击代码块任意行进入编辑，
+  光标直接落在该行（此前固定跳到首字并伴随可见闪跳）；预览文字区
+  鼠标恢复文本光标（不再整块显示手型）。
+
+### 修复
+
+- **编辑面右边界溢出**（PR #5）：编辑中的代码块右缘不再超出块
+  表面约 32px。
+- **镜像视觉稳定性**（PR #5）：两个代码块之间切换编辑不再闪烁、
+  镜像不再上浮盖住相邻段落、1.4px 字体微跳消除。
+- **图表与编辑契约兼容性**（PR #5）：`$$` 数学块不再被图表契约
+  误伤（编辑态恢复正常、复制不再返回空串）；图表语言切回普通语言
+  后块不再"锁死"；撤销（Ctrl+Z）不再使图表块还原错乱；图表编辑
+  入口点击后首键不再丢失；mermaid 图内链接恢复可点；编辑中的长行
+  可正常软换行。
+
 ## [0.2.3] — 2026-09-15
 
 代码块工具栏升级为整条折叠开关，并修复编辑代码块时"一分为二"
@@ -433,7 +465,8 @@ The currently-published Marketplace version of
 Still vulnerable to all seven audit findings (H1, H2, H3, H4, H5, H6, H9).
 
 <!-- 变更链接 -->
-[Unreleased]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.0...v0.2.1
