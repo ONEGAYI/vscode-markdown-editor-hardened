@@ -361,9 +361,28 @@ async function testMode(mode, checks) {
     let synced = false;
     for (let i = 0; i < 20; i++) { await sleep(100); if (overlay && overlay.textContent.includes('edited')) { synced = true; break; } }
     add('overlay content follows edits', synced);
+    // Editing-state detection must key on the DISPLAY property alone: vditor
+    // hides an inactive editing pre via display:none, and Lute's caret-block
+    // re-render omits the style attribute entirely — but the raw attribute
+    // can legitimately carry other declarations. A substring match on
+    // "none" would misjudge `user-select: none` as retired and drop the
+    // mirror mid-edit (transparent text left with no ink).
+    editPre.setAttribute('style', 'display: block; user-select: none;');
+    let staysEditing = false;
+    for (let i = 0; i < 10; i++) {
+      await sleep(100);
+      if (document.querySelector('body > .vmd-cb-edit-hl') && block.classList.contains('vmd-cb--editing')) { staysEditing = true; break; }
+    }
+    add('unrelated "none" declarations do not retire the mirror', staysEditing);
+    editPre.setAttribute('style', 'display: block;'); // restore the plain form
+    await sleep(150);
     // vditor REPLACES the editing block in place on every keystroke — the
     // input handler must re-sync the fresh block (editing class + mirror).
     const fresh = block.cloneNode(true);
+    // Lute re-renders the caret block WITHOUT the style attribute entirely
+    // (only non-caret blocks carry style="display: none"); clone the same
+    // shape or the test would lock a contract vditor never emits.
+    fresh.querySelector('pre.vditor-wysiwyg__pre').removeAttribute('style');
     block.parentNode.replaceChild(fresh, block);
     fresh.querySelector('pre.vditor-wysiwyg__pre').dispatchEvent(new window.Event('input', { bubbles: true }));
     let reattached = false;
@@ -401,6 +420,12 @@ async function testMode(mode, checks) {
       overlays().some((o) => o.textContent.includes('def hello')));
     add('both blocks carry the editing class',
       fresh.classList.contains('vmd-cb--editing') && !!pyBlock && pyBlock.classList.contains('vmd-cb--editing'));
+    // Scroll re-pins mirrors via the capture-phase delegate; it must never
+    // tear them down or error while blocks are live.
+    window.dispatchEvent(new window.Event('scroll'));
+    document.querySelector('.vditor').dispatchEvent(new window.Event('scroll', { bubbles: false }));
+    await sleep(100);
+    add(`scroll events keep live mirrors mounted (got ${overlays().length})`, overlays().length === 2);
     // A retires while B keeps editing — only A's mirror goes away.
     freshEdit.setAttribute('style', 'display: none;');
     await sleep(300);

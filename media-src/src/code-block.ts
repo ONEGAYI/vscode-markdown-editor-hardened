@@ -251,6 +251,12 @@ export function installHljsAliases() {
             }
           }
         }
+        // hljs just became available: any mirror mounted while it was still
+        // loading is plain-text only. Schedule one highlight pass for the
+        // live editing blocks so they upgrade without waiting for a key.
+        for (const p of Array.from(document.querySelectorAll('pre.vditor-wysiwyg__pre'))) {
+          if (isEditingPre(p)) scheduleMirrorRender(p as HTMLPreElement)
+        }
       },
     })
   } catch (err) {
@@ -325,7 +331,40 @@ function positionEditOverlay(editPre: HTMLPreElement, overlay: HTMLElement) {
  *  layout, the mirror renders the highlight behind the transparent text.
  *  Block and mirror are cross-linked via expandos. */
 function isEditingPre(p: Element): boolean {
-  return !/none/.test(p.getAttribute('style') || '')
+  // vditor hides an INACTIVE editing pre via inline `display: none`, and
+  // while a block is being edited it either writes `display: block` or —
+  // for the caret block Lute re-renders on every keystroke — omits the
+  // style attribute entirely. Judge ONLY the display property: substring
+  // matching on the raw attribute would misfire on unrelated declarations
+  // (e.g. `user-select: none`), and CSSOM parsing leaves '' for a missing
+  // attribute, which per the caret convention above still means editing.
+  return p instanceof HTMLElement && p.style.display !== 'none'
+}
+
+/** Cheap immediate mirror: plain text + pin, no highlighting. The editing
+ *  text is transparent, so a fresh mount (or an IME composition frame)
+ *  needs ink NOW; the expensive highlight pass follows on the debounce. */
+function renderPlainMirror(editPre: HTMLPreElement, overlay: HTMLElement) {
+  const code = editPre.querySelector(':scope > code') || editPre
+  const text = (code.textContent || '').replace(/\n$/, '')
+  overlay.textContent = text
+  positionEditOverlay(editPre, overlay)
+}
+
+/** Debounced full highlight pass for one editing pre. The timer's captured
+ *  nodes are re-validated on fire: vditor replaces the editing block on
+ *  every keystroke, so a stale timer must neither paint an orphan mirror
+ *  nor one that now belongs to a different block. */
+function scheduleMirrorRender(editPre: HTMLPreElement) {
+  const ov = (editPre.parentElement as any)?.__vmdOverlay as HTMLElement | undefined
+  if (!ov || !ov.isConnected) return
+  const prev = overlayTimers.get(editPre)
+  if (prev) clearTimeout(prev)
+  overlayTimers.set(editPre, window.setTimeout(() => {
+    if (!editPre.isConnected || !ov.isConnected) return
+    if ((ov as any).__vmdBlock !== editPre.parentElement) return
+    renderEditOverlay(editPre, ov)
+  }, 60))
 }
 
 /** Recompute EVERY editing block's mirror from current DOM truth. Called at
@@ -348,7 +387,11 @@ function refreshEditOverlays() {
   for (const p of Array.from(document.querySelectorAll('pre.vditor-wysiwyg__pre'))) {
     if (!isEditingPre(p)) continue
     const block = p.parentElement
+    // Guard the block type: the editing class flexes the block's layout,
+    // which must only ever apply to a real fenced-block container (Lute
+    // always wraps one; this is future-proofing against vditor variants).
     if (!(block instanceof HTMLElement)) continue
+    if (!block.classList.contains('vditor-wysiwyg__block')) continue
     editing.add(block)
     editPres.push(p as HTMLPreElement)
   }
@@ -399,7 +442,12 @@ function refreshEditOverlays() {
       ov.style.lineHeight = cs.lineHeight
       ov.style.padding = cs.padding
       ov.style.tabSize = cs.tabSize
-      renderEditOverlay(p, ov) // fresh mirror: content now
+      // Fresh mount: plain ink immediately (the foreground is transparent),
+      // full highlight on the shared debounce — vditor rebuilds the editing
+      // block on EVERY keystroke, so a synchronous hljs pass here would run
+      // the full-text highlight once per key.
+      renderPlainMirror(p, ov)
+      scheduleMirrorRender(p)
     } else {
       positionEditOverlay(p, ov) // existing: re-pin only
     }
@@ -528,13 +576,22 @@ export function installCodeBlockEnhancer() {
       const editPre = (e.target as HTMLElement | null)?.closest?.('pre.vditor-wysiwyg__pre')
       if (!(editPre instanceof HTMLPreElement)) return
       refreshEditOverlays()
-      const ov = (editPre.parentElement as any)?.__vmdOverlay as HTMLElement | undefined
-      if (!ov || !ov.isConnected) return
-      const prev = overlayTimers.get(editPre)
-      if (prev) clearTimeout(prev)
-      overlayTimers.set(editPre, setTimeout(() => renderEditOverlay(editPre, ov), 60))
+      // IME composition frames need ink IMMEDIATELY: during composition
+      // vditor takes its light path (no block replacement), so the only
+      // mirror update is ours — and the foreground is transparent, meaning
+      // trailing-edge debounce alone would hide the composed characters
+      // for as long as the user keeps typing. Regular keystrokes just
+      // schedule the debounced highlight.
+      if ((e as InputEvent).isComposing) {
+        const ov = (editPre.parentElement as any)?.__vmdOverlay as HTMLElement | undefined
+        if (ov && ov.isConnected) renderPlainMirror(editPre, ov)
+        return
+      }
+      scheduleMirrorRender(editPre)
     }, true)
     document.addEventListener('scroll', (e) => {
+      // Cheap early-out: nothing to re-pin when no mirror is live.
+      if (!document.querySelector('body > .vmd-cb-edit-hl')) return
       for (const p of Array.from(document.querySelectorAll('pre.vditor-wysiwyg__pre'))) {
         if (!isEditingPre(p)) continue
         const ov = (p.parentElement as any)?.__vmdOverlay as HTMLElement | undefined
