@@ -303,6 +303,42 @@ async function testMode(mode, checks) {
     Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: realClip });
   }
 
+  // ── header-bar toggle (collapse / expand the whole block) ──
+  // The ENTIRE header bar is the toggle control (full-width pill): hover
+  // tints it and clicking anywhere on it — except the two action buttons —
+  // collapses/expands the code area. Copy must keep working while collapsed
+  // (display:none does not change textContent).
+  const bar = pre.querySelector('.vmd-cb-header');
+  add('header bar is the toggle control (role=button, focusable)',
+    !!bar && bar.getAttribute('role') === 'button' && bar.tabIndex === 0);
+  add('header bar carries a chevron indicator', !!bar && !!bar.querySelector('.vmd-cb-chevron'));
+  add('header starts expanded (aria-expanded="true")',
+    !!bar && bar.getAttribute('aria-expanded') === 'true');
+  add('block not collapsed by default', !pre.classList.contains('vmd-cb--collapsed'));
+  // Clicking the language-name area (deepest bubble path) toggles collapse.
+  bar.querySelector('.vmd-cb-lang-name').click();
+  add('click on the bar collapses the block', pre.classList.contains('vmd-cb--collapsed'));
+  add('collapsed bar sets aria-expanded="false"',
+    bar.getAttribute('aria-expanded') === 'false');
+  copied.length = 0;
+  copyBtn.click();
+  await sleep(30);
+  add(`copy still works while collapsed (got ${JSON.stringify(copied)})`,
+    copied.length === 1 && copied[0] === '{ "a": 1 }');
+  bar.click();
+  add('click on the bar expands the block again', !pre.classList.contains('vmd-cb--collapsed'));
+  add('expanded bar sets aria-expanded="true"', bar.getAttribute('aria-expanded') === 'true');
+  add('bar clicks never touch the wrap state', !pre.classList.contains('vmd-cb--wrap'));
+  // Keyboard activation (role=button): Enter and Space both toggle.
+  bar.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  add('Enter on the bar collapses the block', pre.classList.contains('vmd-cb--collapsed'));
+  bar.dispatchEvent(new window.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
+  add('Space on the bar expands the block', !pre.classList.contains('vmd-cb--collapsed'));
+  // Action buttons keep their own behavior — clicking them must NOT fold.
+  wrapBtn.click();
+  add('action-button clicks do not collapse the block', !pre.classList.contains('vmd-cb--collapsed'));
+  wrapBtn.click();
+
   // ── rebuild survival (theme change destroys + recreates vditor) ──
   window.dispatchEvent(new window.MessageEvent('message', {
     data: {
@@ -334,6 +370,9 @@ async function testMode(mode, checks) {
       'pre.vditor-wysiwyg__preview code.language-jsonc',
       'pre.vditor-ir__preview code.language-jsonc',
     ].join(', ')).parentElement;
+    // Collapse FIRST: the overwrite keeps the <pre> (and its collapsed
+    // class) but replaces the header — the fresh bar must be re-synced.
+    editPre.querySelector('.vmd-cb-header').click();
     editPre.innerHTML = '<code class="language-go">package main\n</code>';
     let healedHeader = null;
     for (let i = 0; i < 20; i++) {
@@ -345,6 +384,11 @@ async function testMode(mode, checks) {
       if (!healedHeader) return false;
       const name = healedHeader.querySelector('.vmd-cb-lang-name');
       return !!name && name.textContent === 'go';
+    })());
+    add('collapse state survives the overwrite (fresh bar re-synced)', (() => {
+      if (!healedHeader) return false;
+      return editPre.classList.contains('vmd-cb--collapsed') &&
+        healedHeader.getAttribute('aria-expanded') === 'false';
     })());
   }
 
@@ -374,8 +418,8 @@ async function main() {
   // Design contract (per the user's reference mock): the header bar has NO
   // background of its own — the pre's flat surface is its background, zero
   // color difference, no border/shadow. Separation from the code area is
-  // by SPACING only (margin 0.5em top / 1.25em bottom ≈ 29px raw ink gap).
-  checks.push({ name: 'header has no background tint (flat, same color as code area)', pass: !/\.vmd-cb-header\{[^}]*background/.test(mainCss) && /\.vmd-cb-header\{[^}]*margin:\.5em 0 1\.25em/.test(mainCss) });
+  // by SPACING only (padding 0.75em top / 1.25em bottom ≈ 29px raw ink gap).
+  checks.push({ name: 'header has no background tint (flat, same color as code area)', pass: !/\.vmd-cb-header\{[^}]*background:/.test(mainCss) && /\.vmd-cb-header\{[^}]*padding:\.75em 1em 1\.25em/.test(mainCss) });
   checks.push({ name: 'header has no drop shadow or border (flat design)', pass: !/\.vmd-cb-header\{[^}]*box-shadow/.test(mainCss) });
   checks.push({ name: 'code block has no outer border (flat design)', pass: /\.vditor-reset pre\{[^}]*border:none!important/.test(mainCss) });
   // vditor's codeRender caps each block at `window.outerHeight - 40px` via an
@@ -383,6 +427,21 @@ async function main() {
   // scrollbar (block scroll + page scroll at once). The bridge must override
   // the inline style with !important so blocks keep their natural height.
   checks.push({ name: 'built CSS unsets vditor\'s inline max-height cap on pre code (no inner v-scrollbar)', pass: /\.vditor-reset pre code\{[^}]*max-height:none!important/.test(mainCss) });
+  // Header-bar affordance: the WHOLE bar is the full-width toggle pill —
+  // hover tints it across the block, negative margins bleed it to the pre
+  // edges, collapse hides the code area, chevron indicates the state.
+  checks.push({ name: 'whole header bar tints on hover (clickability signal)', pass: /\.vmd-cb-header:hover\{[^}]*background/.test(mainCss) });
+  checks.push({ name: 'header bar bleeds to the pre edges (full-width pill)', pass: /\.vmd-cb-header\{[^}]*margin:-\.75em -1em 0/.test(mainCss) });
+  checks.push({ name: 'header bar tracks the pointer (cursor)', pass: /\.vmd-cb-header\{[^}]*cursor:pointer/.test(mainCss) });
+  checks.push({ name: 'collapsed block hides its code area', pass: /pre\.vmd-cb--collapsed>code\{[^}]*display:none!important/.test(mainCss) });
+  checks.push({ name: 'collapsed block drops the pre bottom padding (bar IS the strip)', pass: /pre\.vmd-cb--collapsed\{[^}]*padding-bottom:0!important/.test(mainCss) });
+  checks.push({ name: 'collapsed bar rounds all corners', pass: /pre\.vmd-cb--collapsed>\.vmd-cb-header\{[^}]*border-radius:12px/.test(mainCss) });
+  checks.push({ name: 'chevron rotates to point at the collapsed state', pass: /\.vmd-cb--collapsed[^{]*\.vmd-cb-chevron[^{]*\{[^}]*rotate\(-90deg\)/.test(mainCss) });
+  // Editing a fenced block must show ONE block, not two: vditor's wysiwyg
+  // natively keeps the plain editing pre AND the highlighted preview on
+  // screen at the same time; our override hides the preview while the
+  // editing pre is flipped visible (its inline style stops saying "none").
+  checks.push({ name: 'editing pre visible hides the sibling preview (no duplicated block)', pass: /vditor-wysiwyg__pre:not\(\[style\*=(none|"none")\]\)\+pre\.vditor-wysiwyg__preview\{display:none\}/.test(mainCss) });
 
   let failures = 0;
   console.log('[code-block] checks:');
