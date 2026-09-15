@@ -371,6 +371,12 @@ async function main() {
   checks.push({ name: 'built CSS kills the checkerboard background-image on pre code', pass: /pre[^{]*code[^{]*\{[^}]*background-image:\s*none/i.test(mainCss) });
   checks.push({ name: 'built CSS styles the header bar (.vmd-cb-header)', pass: /\.vmd-cb-header/.test(mainCss) });
   checks.push({ name: 'built CSS has wrap state (pre.vmd-cb--wrap)', pass: /vmd-cb--wrap/.test(mainCss) });
+  // The sticky header must be fully opaque: the theme's textCodeBlock token
+  // composited over the opaque editor background (multi-layer background),
+  // so scrolling code can never bleed through on semi-transparent themes.
+  // A faint darkening layer sits on top for separation from the code area.
+  checks.push({ name: 'header sticky bar paints an opaque multi-layer background', pass: /\.vmd-cb-header\{[^}]*background-image:linear-gradient\(rgba\(0,\s*0,\s*0/.test(mainCss) && /linear-gradient\(var\(--vscode-textCodeBlock-background/.test(mainCss) && /\.vmd-cb-header\{[^}]*background-color:var\(--vscode-editor-background/.test(mainCss) });
+  checks.push({ name: 'header sticky bar has drop shadow for scroll separation', pass: /\.vmd-cb-header\{[^}]*box-shadow/.test(mainCss) });
 
   let failures = 0;
   console.log('[code-block] checks:');
