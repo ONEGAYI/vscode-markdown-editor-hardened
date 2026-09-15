@@ -13,7 +13,33 @@ dropped.
 
 ## [Unreleased]
 
+### 新功能
+
+- **代码块头部栏与按块自动换行**：每个代码块顶部新增一行常驻工具栏——
+  左侧 `</>` 图标与加粗的围栏语言名（无语言时显示 `text`），右侧为
+  "启用自动换行"与"复制"两个图标按钮，深浅主题自动适配。自动换行按块
+  独立切换、默认关闭、不跨编辑会话记忆；复制改用 Clipboard API 并带
+  成功反馈（vditor 内置复制按钮的内联事件处理器在扩展 CSP 下本就无法
+  执行，现一并隐藏）。mermaid 等图表块保持原有渲染不受影响；导出与
+  复制的 Markdown/HTML 不包含工具栏。
+
+- **语言别名高亮修复**：```jsonc、```shellscript、```mysql 等 VS Code
+  风格的语言标识此前完全不显示语法高亮（highlight.js 不认识的标识会被
+  回退为纯文本）。现已在加载时注册 22 个别名映射（jsonc→json、
+  shellscript→bash、systemverilog→verilog、vue/svelte→xml 近似等），
+  配色继续跟随 VS Code 主题（亮色 vs / 暗色 vs2015）。
+
 ### 其他改进
+
+- **去除代码块棋盘格背景**：vditor 原生在代码块背景平铺一张内嵌 PNG
+  形成纵横交错的棋盘纹理，现以纯色主题背景
+  （`--vscode-textCodeBlock-background`）取代。
+
+- **修复 vditor 3.11.2 悬浮工具条必然抛错的上游缺陷**：
+  `customWysiwygToolbar` 是可选回调，但 vditor 在引用块/列表/表格等
+  悬浮工具条路径上无空值守卫地调用它——此前每次打开悬浮工具条都会
+  抛出未捕获 TypeError 并跳过定位逻辑。现以空回调兜底，内置按钮与
+  定位恢复正常。
 
 - **版本序列切换为独立递增**：下个发布起使用 `0.2.0` 起的独立版本号
   （Marketplace 兼容的纯 semver，无预发布后缀），上游基点对应关系由

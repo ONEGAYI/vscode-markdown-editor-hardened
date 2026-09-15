@@ -188,8 +188,20 @@ body,
 
 .vditor-reset pre code {
   background-color: transparent !important;
+  /* vditor ships a tiled base64 PNG here that shows through as a
+   * "checkerboard" behind code text; a background-color override alone
+   * cannot hide it. Keep the block a flat --vscode-textCodeBlock surface. */
+  background-image: none !important;
   padding: 0 !important;
   border-radius: 0 !important;
+}
+
+/* vditor 3.11 has NO option to disable its per-block copy button (codeRender
+ * runs unconditionally), and it would sit next to our header-bar buttons.
+ * Hiding it via CSS also keeps its maxHeight side effect intact. */
+.vditor-reset pre div.vditor-copy,
+.vditor-reset pre:hover div.vditor-copy {
+  display: none !important;
 }
 
 /* ============================================================

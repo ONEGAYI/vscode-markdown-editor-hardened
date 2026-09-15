@@ -196,3 +196,100 @@ body.vmd-table-nowrap .vditor-toolbar [data-type="table-wrap"] {
 .jconfirm-buttons button {
   text-transform: none!important;
 }
+
+/* ── Code block header bar (see src/code-block.ts) ────────────────────────
+ * One bar per fenced block: `</>` icon + language name on the left,
+ * wrap + copy buttons on the right. Same background as the code area, no
+ * separator (per the design reference). Sticky so it stays visible while
+ * scrolling tall blocks (vditor caps block height at viewport size). */
+.vmd-cb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: -0.15em 0 0.55em;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.15));
+  user-select: none;
+}
+.vmd-cb-lang {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-family: var(--vscode-font-family, var(--vscode-editor-font-family, sans-serif));
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-editor-foreground, #d4d4d4);
+}
+.vmd-cb-lang-icon {
+  display: inline-flex;
+  flex: none;
+}
+.vmd-cb-lang-icon svg {
+  width: 15px;
+  height: 10px;
+}
+.vmd-cb-lang-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vmd-cb-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.vmd-cb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-editor-foreground, #d4d4d4);
+  opacity: 0.75;
+  cursor: pointer;
+}
+.vmd-cb-btn svg {
+  width: 15px;
+  height: 15px;
+}
+.vmd-cb-btn:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.25));
+}
+.vmd-cb-btn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+}
+.vmd-cb-btn.vmd-cb-btn--on {
+  opacity: 1;
+  color: var(--vscode-focusBorder, #007fd4);
+}
+.vmd-cb-btn .vmd-cb-icon {
+  display: inline-flex;
+}
+.vmd-cb-copy .vmd-cb-icon-check {
+  display: none;
+}
+.vmd-cb-copy.vmd-cb-btn--ok .vmd-cb-icon-copy {
+  display: none;
+}
+.vmd-cb-copy.vmd-cb-btn--ok .vmd-cb-icon-check {
+  display: inline-flex;
+  color: var(--vscode-testing-iconPassed, #73c991);
+}
+.vmd-cb-btn.vmd-cb-btn--err {
+  opacity: 1;
+  color: var(--vscode-errorForeground, #f48771);
+}
+/* Per-block soft wrap, toggled by the header's wrap button. */
+pre.vmd-cb--wrap code {
+  white-space: pre-wrap !important;
+  overflow-wrap: break-word;
+}

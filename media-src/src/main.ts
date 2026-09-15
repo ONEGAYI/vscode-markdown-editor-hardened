@@ -18,6 +18,7 @@ import { t, lang } from './lang'
 import { toolbar } from './toolbar'
 import { fixTableIr } from './fix-table-ir'
 import { initSearch } from './search'
+import { installCodeBlockEnhancer, installHljsAliases } from './code-block'
 import './main.css'
 // C3.5/C3.6/C3.7: vscode-theme-bridge.css maps vditor's selectors to
 // VS Code's --vscode-* CSS variables so the editor aligns with the
@@ -285,6 +286,13 @@ function initVditor(msg) {
     // every link shape — real <a> in WYSIWYG/preview and the IR `[data-type="a"]`
     // marker span — so vditor does not need to handle clicks at all.
     link: { isOpen: false },
+    // vditor 3.11.2 calls `options.customWysiwygToolbar(type, popover)` at ~14
+    // sites (blockquote / list / table / footnotes / toc popovers) with NO
+    // null guard, even though the callback is optional and we never set it —
+    // every popover open threw an uncaught TypeError and skipped
+    // setPopoverPosition(). The no-op restores the intended default: built-in
+    // popover buttons render and position normally, nothing is appended.
+    customWysiwygToolbar: () => {},
     // C3.8/C3.9: default to WYSIWYG mode when the user has no saved
     // preference. (Previously 'ir' — Instant Rendering — which is a
     // dual-pane source+preview while editing; visually noisy.) Users
@@ -298,6 +306,10 @@ function initVditor(msg) {
       fixTableIr()
       fixPanelHover()
       trackScrollPosition()
+      // Header bar (language + wrap + copy) for every rendered code block.
+      // Idempotent; the internal MutationObserver re-decorates blocks that
+      // vditor re-renders after this rebuild.
+      installCodeBlockEnhancer()
       restoreScrollPosition(msg.scrollTop)
       // Initialize search bar once (idempotent across vditor re-inits)
       if (!(window as any).__vmdSearch) {
@@ -429,5 +441,11 @@ document.addEventListener('keydown', (e) => {
 
 fixLinkClick()
 fixCut()
+
+// Must run at module load — BEFORE any vditor init can load highlight.js.
+// The accessor intercepts the hljs script's first `window.hljs = ...` and
+// registers our fence-language aliases on the instance before vditor's
+// highlight callbacks run (see code-block.ts for the full rationale).
+installHljsAliases()
 
 vscode.postMessage({ command: 'ready' })

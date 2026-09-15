@@ -5,6 +5,11 @@ const Langs = {
     copyHtml: 'Copy HTML',
     resetConfig: 'Reset config',
     resetConfirm: "Are you sure to reset the markdown-editor's config?",
+    enableWrap: 'Enable word wrap',
+    disableWrap: 'Disable word wrap',
+    copyCode: 'Copy code',
+    copied: 'Copied',
+    copyFailed: 'Copy failed',
   },
   ja_JP: {
     save: '保存する',
@@ -18,6 +23,11 @@ const Langs = {
     copyHtml: '复制 HTML',
     resetConfig: '重置配置',
     resetConfirm: '确定要重置 markdown-editor 的配置么?',
+    enableWrap: '启用自动换行',
+    disableWrap: '关闭自动换行',
+    copyCode: '复制代码',
+    copied: '已复制',
+    copyFailed: '复制失败',
   },
 }
 
