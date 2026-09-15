@@ -281,7 +281,9 @@ export function installCodeBlockEnhancer() {
           decorate(m.target)
           continue
         }
-        for (const node of m.addedNodes) {
+        // NodeList is not TS-iterable under this tsconfig's lib set
+        // (no DOM.Iterable); Array.from keeps the check green.
+        for (const node of Array.from(m.addedNodes)) {
           if (!(node instanceof HTMLElement)) continue
           if (node.matches(PRE_SELECTOR)) decorate(node as HTMLPreElement)
           else if (node.querySelectorAll(PRE_SELECTOR).length > 0) {
