@@ -310,6 +310,108 @@ async function testMode(mode, checks) {
       }
     }
     add('leaving diagram edit mode removes the mirror', diagramRetired);
+
+    // In-figure links (mermaid securityLevel loose): the figure guard must
+    // swallow figure clicks, NOT link clicks — the link's own click handlers
+    // (this extension's fixLinkClick / vditor's A branch) must still see it.
+    const linkSeen = [];
+    const wysiwygEl = document.querySelector('.vditor-wysiwyg');
+    const onWysClick = () => linkSeen.push(true);
+    wysiwygEl.addEventListener('click', onWysClick);
+    const figLink = document.createElement('a');
+    figLink.href = 'https://example.com/';
+    figLink.textContent = 'figure link';
+    mermaidPre.querySelector('div.language-mermaid, code.language-mermaid').appendChild(figLink);
+    figLink.click();
+    add('in-figure link clicks are not swallowed by the figure guard', linkSeen.length > 0);
+    add('in-figure link click does not enter edit mode', mEditPre.style.display === 'none');
+    wysiwygEl.removeEventListener('click', onWysClick);
+
+    // vditor's Undo.addCaret restores diagram blocks by checking the preview
+    // pre's FIRST element child for language-echarts/-math/… classes — our
+    // header/pill must not take that slot.
+    add('diagram decorations leave the figure as firstElementChild',
+      mermaidPre.firstElementChild.classList.contains('language-mermaid'));
+
+    // $$ math blocks are NOT fenced code blocks: Lute emits a bare source
+    // pre (no vditor-wysiwyg__pre class) inside a data-type="math-block"
+    // container. The diagram contract must not hijack them — their editing
+    // state has no shell/mirror support and copy would yield "".
+    const mathHost = document.createElement('div');
+    mathHost.innerHTML =
+      '<div class="vditor-wysiwyg__block" data-type="math-block" data-block="0">' +
+      '<pre style="display:none"><code data-type="math-block">x^2 + y = z\n</code></pre>' +
+      '<pre class="vditor-wysiwyg__preview" data-render="1"><div data-type="math-block" class="language-math">x^2</div></pre>' +
+      '</div>';
+    document.querySelector('.vditor-wysiwyg').appendChild(mathHost.firstElementChild);
+    await sleep(300); // observer sweep decorates the new block
+    const mathPreview = document.querySelector('[data-type="math-block"] > pre.vditor-wysiwyg__preview');
+    add('$$ math blocks are not hijacked by the diagram contract',
+      !mathPreview.classList.contains('vmd-cb--diagram') &&
+      !headerOf(mathPreview) &&
+      !mathPreview.querySelector('.vmd-cb-edit-btn'));
+
+    // vditor's language-edit path rewrites the preview pre's innerHTML IN
+    // PLACE. Switching a diagram fence to a plain language must fully undo
+    // the diagram contract — a lingering vmd-cb--diagram class would hide
+    // the rebuilt header AND swallow the block's clicks (zombie block).
+    mEditPre.querySelector('code').className = 'language-js';
+    mermaidPre.innerHTML = '<code class="language-js">console.log(1)\n</code>';
+    await sleep(300); // observer → decorate reruns on the rewritten pre
+    add('switching a diagram block to a plain language clears the diagram modifier',
+      !mermaidPre.classList.contains('vmd-cb--diagram'));
+    add('switched block gets a normal (visible) header', !!headerOf(mermaidPre));
+    mermaidPre.querySelector('code').click();
+    add('switched block is clickable into edit mode again', mEditPre.style.display === 'block');
+
+    // focusEditAt's browser path, stubbed three ways: a hit inside this
+    // block's code is adopted; a point that drifted outside the block and an
+    // API that throws both fall back to the code start.
+    const mCode = mEditPre.querySelector('code');
+    const leaveEdit = async () => {
+      window.getSelection().removeAllRanges();
+      const anchor = document.querySelector('.vditor-wysiwyg p') || document.body;
+      const r = document.createRange();
+      r.selectNodeContents(anchor);
+      r.collapse(true);
+      window.getSelection().addRange(r);
+      mEditPre.setAttribute('style', 'display: none;');
+      await sleep(250);
+    };
+    const caretDesc = () => {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return null;
+      const rg = sel.getRangeAt(0);
+      return rg.startContainer === mCode
+        ? 'code:0'
+        : (rg.startContainer.nodeType === 3 ? 'text:' + rg.startOffset : rg.startContainer.nodeName);
+    };
+    // (a) hit inside this block's code → adopted verbatim
+    await leaveEdit();
+    const hitText = mCode.firstChild;
+    const hitRange = document.createRange();
+    hitRange.setStart(hitText, 12);
+    hitRange.collapse(true);
+    document.caretRangeFromPoint = () => hitRange;
+    mermaidPre.querySelector('code').click();
+    add('caret from point: an in-block hit is adopted (got ' + caretDesc() + ')',
+      caretDesc() === 'text:12');
+    // (b) point drifted outside the block → first-char fallback
+    await leaveEdit();
+    const strayHit = document.createRange();
+    strayHit.selectNodeContents(document.querySelector('.vditor-wysiwyg p') || document.body);
+    document.caretRangeFromPoint = () => strayHit;
+    mermaidPre.querySelector('code').click();
+    add('caret from point: an out-of-block hit falls back to code start (got ' + caretDesc() + ')',
+      caretDesc() === 'code:0');
+    // (c) API throws → first-char fallback
+    await leaveEdit();
+    document.caretRangeFromPoint = () => { throw new Error('boom'); };
+    mermaidPre.querySelector('code').click();
+    add('caret from point: an API error falls back to code start (got ' + caretDesc() + ')',
+      caretDesc() === 'code:0');
+    delete document.caretRangeFromPoint;
+    await leaveEdit();
   }
 
   // ── wrap toggle ──

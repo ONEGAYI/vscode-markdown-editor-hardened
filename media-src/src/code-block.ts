@@ -186,17 +186,31 @@ export function decorate(pre: HTMLPreElement): boolean {
   if (!langEl) return false
   const lang = langOf(langEl)
   if (DIAGRAM_LANGS.has(lang.toLowerCase())) {
-    // Diagram blocks: wysiwyg only — the click guard + hover pill below are
-    // wired to wysiwyg's showCode path; ir/sv keep vditor's stock behavior.
+    // Diagram blocks: wysiwyg FENCED code blocks only — the click guard +
+    // hover pill below are wired to wysiwyg's showCode path; ir/sv keep
+    // vditor's stock behavior. The data-type gate keeps $$ math blocks out:
+    // Lute emits those inside a data-type="math-block" container with a BARE
+    // source pre (no vditor-wysiwyg__pre class), so the diagram shell/mirror
+    // machinery cannot support them (no toolbar, no mirror, copy would be "").
     if (!pre.classList.contains('vditor-wysiwyg__preview')) return false
+    if (pre.parentElement?.getAttribute('data-type') !== 'code-block') return false
     pre.classList.add('vmd-cb--diagram')
     // The header is the EDIT-MODE toolbar (hidden while previewing via CSS)
-    // and the pill is the edit entry (shown on hover via CSS).
-    pre.insertBefore(buildEditButton(), pre.firstChild)
-    pre.insertBefore(buildHeader(lang), pre.firstChild)
+    // and the pill is the edit entry (shown on hover via CSS). Both go at
+    // the END of the pre: vditor's Undo.addCaret restores rendered diagram
+    // blocks by checking the preview pre's FIRST element child for
+    // language-echarts/-plantuml/-mindmap/-math classes, and showCode's
+    // mindmap branch reads the same slot — our nodes must not take it.
+    pre.appendChild(buildEditButton())
+    pre.appendChild(buildHeader(lang))
     return true
   }
   if (!code) return false
+  // Language-switch recovery: vditor's language-edit path rewrites the
+  // preview innerHTML in place; a block switched FROM a diagram language to
+  // a plain one would otherwise keep the modifier class — its header stays
+  // CSS-hidden and the figure guard keeps swallowing clicks (zombie block).
+  pre.classList.remove('vmd-cb--diagram')
   const header = buildHeader(lang)
   pre.insertBefore(header, pre.firstChild)
   // In-place overwrite recovery: the <pre> survives with its collapsed class
@@ -585,6 +599,19 @@ export function installCodeBlockEnhancer() {
   if (!w.__vmdCodeBlockEnhancer) {
     w.__vmdCodeBlockEnhancer = true
 
+    // The edit pill is a real <button>: clicking it moves FOCUS to the
+    // button, while vditor's showCode (activated by the pill's pass-through
+    // click) only sets the selection and never re-focuses the editor host —
+    // the first keystroke after entering edit would land on the button and
+    // be lost. Preventing mousedown's default keeps the focus where it was;
+    // the click itself still fires, and Tab-focusability is unaffected
+    // (keyboard focus does not go through mousedown).
+    document.addEventListener('mousedown', (e) => {
+      if ((e.target as HTMLElement | null)?.closest?.('.vmd-cb-edit-btn') instanceof HTMLElement) {
+        e.preventDefault()
+      }
+    }, true)
+
     // Delegated at DOCUMENT CAPTURE level so it (a) survives vditor
     // destroy/rebuild cycles (theme switches) without re-binding and
     // (b) runs BEFORE vditor's own container-level click handlers: clicking
@@ -658,6 +685,11 @@ export function installCodeBlockEnhancer() {
       // swallow the click. vditor turns every click inside a preview <pre>
       // into edit mode, so selecting the rendered text to copy it (click +
       // drag) misfired into editing — the pill above is the ONLY entry.
+      // Links INSIDE the figure (mermaid securityLevel loose) are exempt:
+      // their own handlers must still run (this extension's fixLinkClick on
+      // bubble; vditor's A branch preventDefaults and never reaches
+      // showCode, so letting them through cannot re-open the misfire).
+      if (target?.closest?.('a') instanceof HTMLElement) return
       if (target?.closest?.('pre.vmd-cb--diagram') instanceof HTMLElement) {
         e.stopPropagation()
         return
@@ -669,9 +701,12 @@ export function installCodeBlockEnhancer() {
       // the editing pre is flipped and focused at the click point in one
       // synchronous step, and vditor's own click handler is cut off (its
       // activation duties — display flip, empty-text guard, caret focus —
-      // are all reproduced in focusEditAt). The class check keeps the
-      // takeover to real fenced-code blocks: html-block's source pre has no
-      // vditor-wysiwyg__pre class and keeps vditor's stock click path.
+      // are all reproduced in focusEditAt; its trailing scrollCenter is
+      // deliberately skipped: the click already targeted a visible spot, so
+      // scrolling the block to the viewport center would be a jump). The
+      // class check keeps the takeover to real fenced-code blocks:
+      // html-block's source pre has no vditor-wysiwyg__pre class and keeps
+      // vditor's stock click path.
       const preview = target?.closest?.('pre.vditor-wysiwyg__preview')
       if (preview instanceof HTMLPreElement) {
         const editPre = preview.previousElementSibling
