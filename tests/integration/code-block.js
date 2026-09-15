@@ -371,12 +371,18 @@ async function main() {
   checks.push({ name: 'built CSS kills the checkerboard background-image on pre code', pass: /pre[^{]*code[^{]*\{[^}]*background-image:\s*none/i.test(mainCss) });
   checks.push({ name: 'built CSS styles the header bar (.vmd-cb-header)', pass: /\.vmd-cb-header/.test(mainCss) });
   checks.push({ name: 'built CSS has wrap state (pre.vmd-cb--wrap)', pass: /vmd-cb--wrap/.test(mainCss) });
-  // The sticky header must be fully opaque: the theme's textCodeBlock token
-  // composited over the opaque editor background (multi-layer background),
-  // so scrolling code can never bleed through on semi-transparent themes.
-  // A faint darkening layer sits on top for separation from the code area.
-  checks.push({ name: 'header sticky bar paints an opaque multi-layer background', pass: /\.vmd-cb-header\{[^}]*background-image:linear-gradient\(rgba\(0,\s*0,\s*0/.test(mainCss) && /linear-gradient\(var\(--vscode-textCodeBlock-background/.test(mainCss) && /\.vmd-cb-header\{[^}]*background-color:var\(--vscode-editor-background/.test(mainCss) });
-  checks.push({ name: 'header sticky bar has drop shadow for scroll separation', pass: /\.vmd-cb-header\{[^}]*box-shadow/.test(mainCss) });
+  // Design contract (per the user's reference mock): the header bar has NO
+  // background of its own — the pre's flat surface is its background, zero
+  // color difference, no border/shadow. Separation from the code area is
+  // by SPACING only (margin 0.5em top / 1.25em bottom ≈ 29px raw ink gap).
+  checks.push({ name: 'header has no background tint (flat, same color as code area)', pass: !/\.vmd-cb-header\{[^}]*background/.test(mainCss) && /\.vmd-cb-header\{[^}]*margin:\.5em 0 1\.25em/.test(mainCss) });
+  checks.push({ name: 'header has no drop shadow or border (flat design)', pass: !/\.vmd-cb-header\{[^}]*box-shadow/.test(mainCss) });
+  checks.push({ name: 'code block has no outer border (flat design)', pass: /\.vditor-reset pre\{[^}]*border:none!important/.test(mainCss) });
+  // vditor's codeRender caps each block at `window.outerHeight - 40px` via an
+  // INLINE style, so taller-than-window blocks used to grow an inner vertical
+  // scrollbar (block scroll + page scroll at once). The bridge must override
+  // the inline style with !important so blocks keep their natural height.
+  checks.push({ name: 'built CSS unsets vditor\'s inline max-height cap on pre code (no inner v-scrollbar)', pass: /\.vditor-reset pre code\{[^}]*max-height:none!important/.test(mainCss) });
 
   let failures = 0;
   console.log('[code-block] checks:');

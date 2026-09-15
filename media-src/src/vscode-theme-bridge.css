@@ -181,8 +181,12 @@ body,
 
 .vditor-reset pre {
   background-color: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.15)) !important;
-  border: 1px solid var(--vscode-editorWidget-border, rgba(127, 127, 127, 0.2)) !important;
-  border-radius: 4px;
+  /* No outer border (per user design preference): the block is delineated
+   * by its background tint alone, matching the header bar's flat look. */
+  border: none !important;
+  /* Reference mock measures a ~16-18px corner radius; 12px sits clearly
+   * toward that look without exceeding it. */
+  border-radius: 12px;
   padding: 0.75em 1em;
 }
 
@@ -192,13 +196,17 @@ body,
    * "checkerboard" behind code text; a background-color override alone
    * cannot hide it. Keep the block a flat --vscode-textCodeBlock surface. */
   background-image: none !important;
+  /* vditor's codeRender caps every block at `window.outerHeight - 40px`
+   * via an INLINE style, so any block taller than the window gets its own
+   * inner vertical scrollbar (page scroll + block scroll at the same time).
+   * Unset it: blocks grow to their natural height and only the page scrolls. */
+  max-height: none !important;
   padding: 0 !important;
   border-radius: 0 !important;
 }
 
 /* vditor 3.11 has NO option to disable its per-block copy button (codeRender
- * runs unconditionally), and it would sit next to our header-bar buttons.
- * Hiding it via CSS also keeps its maxHeight side effect intact. */
+ * runs unconditionally), and it would sit next to our header-bar buttons. */
 .vditor-reset pre div.vditor-copy,
 .vditor-reset pre:hover div.vditor-copy {
   display: none !important;
