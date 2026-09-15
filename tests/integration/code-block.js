@@ -33,6 +33,10 @@ const MD = [
   '{ "a": 1 }',
   '```',
   '',
+  '```JSON',
+  '{ "upper": true }',
+  '```',
+  '',
   '```python',
   'def hello():',
   '    print("world")',
@@ -202,6 +206,16 @@ async function testMode(mode, checks) {
       !!name && name.textContent === 'text');
   }
 
+  // Uppercase fence language: header shows the raw info string as written;
+  // hljs itself resolves names case-insensitively.
+  const upperPre = previewPresList.find((pre) => !!pre.querySelector(':scope > code.language-JSON'));
+  add('uppercase language block has a header', !!upperPre && !!headerOf(upperPre));
+  if (upperPre && headerOf(upperPre)) {
+    const name = headerOf(upperPre).querySelector('.vmd-cb-lang-name');
+    add(`uppercase language shown verbatim "JSON" (got "${name && name.textContent}")`,
+      !!name && name.textContent === 'JSON');
+  }
+
   // mermaid is rendered by vditor's own diagram pipeline — its <code> may be
   // replaced entirely, so search ALL preview pres (not just code-bearing ones).
   const mermaidPre = previewPres(document).find((pre) => !!pre.querySelector('code.language-mermaid'));
@@ -233,7 +247,33 @@ async function testMode(mode, checks) {
   copyBtn.click();
   await sleep(30);
   add(`copy button writes code text to clipboard (got ${JSON.stringify(copied)})`,
-    copied.length === 1 && copied[0].trim() === '{ "a": 1 }');
+    copied.length === 1 && copied[0] === '{ "a": 1 }');
+
+  // Copy must exclude vditor's hidden line-number helper text (present when
+  // the user enables preview.hljs.lineNumber; VD:3199 keeps a
+  // .vditor-linenumber__temp copy of every line INSIDE <code>).
+  const tempSpan = document.createElement('span');
+  tempSpan.className = 'vditor-linenumber__temp';
+  tempSpan.textContent = 'PHANTOM-LINE\n';
+  jsoncPre.appendChild(tempSpan);
+  copied.length = 0;
+  copyBtn.click();
+  await sleep(30);
+  add(`copy excludes line-number temp text (got ${JSON.stringify(copied)})`,
+    copied.length === 1 && copied[0] === '{ "a": 1 }');
+  tempSpan.remove();
+
+  // Copy failure must surface on the button (error tint + title), not just
+  // a hover-only tooltip swap.
+  const realClip = window.navigator.clipboard;
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: () => Promise.reject(new Error('denied')) },
+  });
+  copyBtn.click();
+  await sleep(30);
+  add('copy failure adds error state to button', copyBtn.classList.contains('vmd-cb-btn--err'));
+  Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: realClip });
 
   // ── rebuild survival (theme change destroys + recreates vditor) ──
   window.dispatchEvent(new window.MessageEvent('message', {
@@ -254,6 +294,34 @@ async function testMode(mode, checks) {
     if (code && headerOf(code.parentElement)) { rebuiltHeader = headerOf(code.parentElement); break; }
   }
   add('header re-decorates after vditor rebuild (theme switch)', !!rebuiltHeader);
+
+  // ── in-place innerHTML overwrite (vditor's language-edit path), LAST ──
+  // Changing the fence language in wysiwyg/ir rewrites the preview pre's
+  // CONTENT in place (VD:7684): the <pre> node survives, its old children
+  // (including our header) are replaced by fresh ones. The observer must
+  // re-decorate the mutation TARGET too, not only newly-added pre nodes.
+  // SV mode has no language-edit path, so only wysiwyg/ir assert recovery.
+  if (mode !== 'sv') {
+    const editPre = document.querySelector([
+      'pre.vditor-wysiwyg__preview code.language-jsonc',
+      'pre.vditor-ir__preview code.language-jsonc',
+    ].join(', ')).parentElement;
+    editPre.innerHTML = '<code class="language-go">package main\n</code>';
+    let healedHeader = null;
+    for (let i = 0; i < 20; i++) {
+      await sleep(100);
+      healedHeader = headerOf(editPre);
+      if (healedHeader) break;
+    }
+    add('header re-decorates after in-place innerHTML overwrite (language edit)', (() => {
+      if (!healedHeader) return false;
+      const name = healedHeader.querySelector('.vmd-cb-lang-name');
+      return !!name && name.textContent === 'go';
+    })());
+  }
+
+  // No jsdom page-level errors (script crashes) may have slipped through.
+  add(`no page errors (got ${pageErrors.length})`, pageErrors.length === 0);
 }
 
 async function main() {

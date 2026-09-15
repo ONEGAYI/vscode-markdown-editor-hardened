@@ -25,7 +25,7 @@ dropped.
 
 - **语言别名高亮修复**：```jsonc、```shellscript、```mysql 等 VS Code
   风格的语言标识此前完全不显示语法高亮（highlight.js 不认识的标识会被
-  回退为纯文本）。现已在加载时注册 25 个别名映射（jsonc→json、
+  回退为纯文本）。现已在加载时注册 22 个别名映射（jsonc→json、
   shellscript→bash、systemverilog→verilog、vue/svelte→xml 近似等），
   配色继续跟随 VS Code 主题（亮色 vs / 暗色 vs2015）。
 

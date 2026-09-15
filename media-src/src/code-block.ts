@@ -22,6 +22,8 @@
  * Wiring contract is asserted by tests/integration/code-block.js.
  */
 
+import { t } from './lang'
+
 // vditor renders these through dedicated diagram pipelines (VD codeRender's
 // own skip list) — no header bar for them.
 const DIAGRAM_LANGS = new Set([
@@ -33,7 +35,8 @@ const DIAGRAM_LANGS = new Set([
 // highlight.js does not know. vditor falls back to plaintext for them, which
 // is why e.g. ```jsonc blocks showed NO highlighting at all. The aliases are
 // registered onto hljs as soon as it loads (see installHljsAliases).
-// Verified against the bundled hljs 11.7 build (197 languages).
+// Verified against the bundled hljs 11.7 build (192 core languages in
+// highlight.min.js + 5 more from third-languages.js).
 export const LANG_ALIAS: Record<string, string> = {
   // exact-language identifiers hljs names differently
   jsonc: 'json',
@@ -102,14 +105,16 @@ export function langOf(code: Element): string {
 export function buildHeader(lang: string): HTMLElement {
   const header = document.createElement('div')
   header.className = 'vmd-cb-header'
+  const wrapLabel = t('enableWrap')
+  const copyLabel = t('copyCode')
   header.innerHTML =
     '<span class="vmd-cb-lang">' +
     `<span class="vmd-cb-lang-icon">${CODE_ICON_SVG}</span>` +
     '<span class="vmd-cb-lang-name"></span>' +
     '</span>' +
     '<span class="vmd-cb-actions">' +
-    `<button type="button" class="vmd-cb-btn vmd-cb-wrap" title="启用自动换行" aria-label="启用自动换行">${WRAP_ICON_SVG}</button>` +
-    `<button type="button" class="vmd-cb-btn vmd-cb-copy" title="复制代码" aria-label="复制代码">` +
+    `<button type="button" class="vmd-cb-btn vmd-cb-wrap" title="${wrapLabel}" aria-label="${wrapLabel}">${WRAP_ICON_SVG}</button>` +
+    `<button type="button" class="vmd-cb-btn vmd-cb-copy" title="${copyLabel}" aria-label="${copyLabel}">` +
     `<span class="vmd-cb-icon vmd-cb-icon-copy">${COPY_ICON_SVG}</span>` +
     `<span class="vmd-cb-icon vmd-cb-icon-check">${CHECK_ICON_SVG}</span>` +
     '</button>' +
@@ -138,12 +143,29 @@ export function decorateAll(root: ParentNode): number {
   return added
 }
 
-function flashCopied(btn: HTMLElement) {
-  btn.classList.add('vmd-cb-btn--ok')
-  btn.title = '已复制'
+/** Code text for the clipboard. When vditor's line numbers are enabled
+ *  (preview.hljs.lineNumber), it keeps hidden helper copies of every line
+ *  (.vditor-linenumber__temp / __rows) INSIDE <code> — strip those so the
+ *  copied text is the code alone, then drop Lute's single trailing \n. */
+function codeTextOf(code: Element): string {
+  let source: Element = code
+  if (code.querySelector('.vditor-linenumber__temp, .vditor-linenumber__rows')) {
+    source = code.cloneNode(true) as Element
+    source.querySelectorAll('.vditor-linenumber__temp, .vditor-linenumber__rows')
+      .forEach((el) => el.remove())
+  }
+  return (source.textContent || '').replace(/\n$/, '')
+}
+
+/** Show a transient state (success check / error tint) on a copy button. */
+function flashCopyState(btn: HTMLElement, cls: string, label: string) {
+  btn.classList.add(cls)
+  btn.title = label
+  btn.setAttribute('aria-label', label)
   setTimeout(() => {
-    btn.classList.remove('vmd-cb-btn--ok')
-    btn.title = '复制代码'
+    btn.classList.remove(cls)
+    btn.title = t('copyCode')
+    btn.setAttribute('aria-label', t('copyCode'))
   }, 1500)
 }
 
@@ -172,24 +194,26 @@ export function installHljsAliases() {
         value = next
         const hljs = next as { registerAliases?: Function }
         if (hljs && typeof hljs.registerAliases === 'function') {
-          // registerAliases writes a pure name mapping and does NOT require
+          // registerAliases writes a pure name mapping: it neither requires
           // the target language to be registered yet (third-languages.js
-          // loads after highlight.min.js), so all entries can go in directly.
+          // loads after highlight.min.js) nor throws on duplicates; it only
+          // throws on a malformed call (missing second argument), hence the
+          // per-entry guard.
           for (const [alias, target] of Object.entries(LANG_ALIAS)) {
-            // registerAliases throws when an alias is already present; one
-            // bad entry must not break the rest.
             try {
               hljs.registerAliases!(alias, { languageName: target })
             } catch (_) {
-              /* already registered — skip */
+              /* malformed entry — skip */
             }
           }
         }
       },
     })
-  } catch (_) {
+  } catch (err) {
     // window.hljs could not be redefined (already a non-configurable property
-    // in some environments) — highlighting then simply stays as-is.
+    // in some environments). Highlighting then stays as it was — warn so the
+    // degradation is diagnosable instead of silently missing aliases.
+    console.warn('[markdown-editor-hardened] failed to install hljs aliases:', err)
   }
 }
 
@@ -211,24 +235,22 @@ export function installCodeBlockEnhancer() {
       if (btn.classList.contains('vmd-cb-wrap')) {
         const on = pre.classList.toggle('vmd-cb--wrap')
         btn.classList.toggle('vmd-cb-btn--on', on)
-        btn.title = on ? '关闭自动换行' : '启用自动换行'
+        btn.title = t(on ? 'disableWrap' : 'enableWrap')
         btn.setAttribute('aria-label', btn.title)
         return
       }
 
       if (btn.classList.contains('vmd-cb-copy')) {
         const code = pre.querySelector(':scope > code')
-        const text = (code?.textContent || '').replace(/\n$/, '')
+        const text = code ? codeTextOf(code) : ''
         const clip = (navigator as any).clipboard
         if (clip && typeof clip.writeText === 'function') {
           clip.writeText(text).then(
-            () => flashCopied(btn),
-            () => {
-              btn.title = '复制失败'
-            }
+            () => flashCopyState(btn, 'vmd-cb-btn--ok', t('copied')),
+            () => flashCopyState(btn, 'vmd-cb-btn--err', t('copyFailed'))
           )
         } else {
-          btn.title = '复制失败'
+          flashCopyState(btn, 'vmd-cb-btn--err', t('copyFailed'))
         }
       }
     })
@@ -239,6 +261,19 @@ export function installCodeBlockEnhancer() {
     // PRE_SELECTOR, so there is no observer feedback loop.
     const observer = new MutationObserver((mutations) => {
       for (const m of mutations) {
+        // vditor's language-edit path (wysiwyg language input / ir hint,
+        // VD:7684 / VD:11690) rewrites a preview pre's innerHTML IN PLACE:
+        // the <pre> node itself survives while its children (including our
+        // header) are replaced. The mutation target — not any added node —
+        // is the only signal, so re-check it too. decorate() is idempotent.
+        if (
+          m.type === 'childList' &&
+          m.target instanceof HTMLPreElement &&
+          m.target.matches(PRE_SELECTOR)
+        ) {
+          decorate(m.target)
+          continue
+        }
         for (const node of m.addedNodes) {
           if (!(node instanceof HTMLElement)) continue
           if (node.matches(PRE_SELECTOR)) decorate(node as HTMLPreElement)

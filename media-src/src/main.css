@@ -284,6 +284,10 @@ body.vmd-table-nowrap .vditor-toolbar [data-type="table-wrap"] {
   display: inline-flex;
   color: var(--vscode-testing-iconPassed, #73c991);
 }
+.vmd-cb-btn.vmd-cb-btn--err {
+  opacity: 1;
+  color: var(--vscode-errorForeground, #f48771);
+}
 /* Per-block soft wrap, toggled by the header's wrap button. */
 pre.vmd-cb--wrap code {
   white-space: pre-wrap !important;
