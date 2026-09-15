@@ -266,6 +266,172 @@ function toggleCollapse(pre: HTMLPreElement, header: HTMLElement) {
   setCollapseState(header, pre.classList.toggle('vmd-cb--collapsed'))
 }
 
+/* ── Edit-mode syntax highlighting mirror (wysiwyg) ──────────────────────
+ * vditor's wysiwyg edits fenced blocks in a PLAIN text pre — all syntax
+ * colors are lost the moment the block enters edit mode. To keep the block
+ * highlighted while editing (user spec: "edit in the same block, keep the
+ * highlighting, no extra preview"), the editing pre's own text is turned
+ * transparent (caret + selection stay visible) and an aligned highlight
+ * MIRROR is layered behind it, re-rendered from hljs on every input. Same
+ * trick VS Code / CodeMirror use: the editable DOM stays plain text, so
+ * vditor's data extraction, IME and undo stack are untouched. */
+
+const overlayTimers = new WeakMap<HTMLElement, number>()
+
+/** Fence language for the mirror: prefer the editing pre's own code class,
+ *  fall back to the (possibly hidden) preview sibling's. */
+function editLangOf(editPre: HTMLPreElement): string {
+  const block = editPre.parentElement
+  const candidates = [
+    editPre.querySelector(':scope > code'),
+    block ? block.querySelector('.vditor-wysiwyg__preview > code') : null,
+  ]
+  for (const c of candidates) {
+    const m = c ? /(?:^|\s)language-([^\s]+)/.exec(c.className) : null
+    if (m) return m[1]
+  }
+  return ''
+}
+
+function renderEditOverlay(editPre: HTMLPreElement, overlay: HTMLElement) {
+  const code = editPre.querySelector(':scope > code') || editPre
+  const text = (code.textContent || '').replace(/\n$/, '')
+  const hljs = (window as any).hljs
+  const lang = editLangOf(editPre)
+  if (hljs && lang && hljs.getLanguage && hljs.getLanguage(lang)) {
+    try {
+      overlay.innerHTML = hljs.highlight(text, { language: lang }).value
+      positionEditOverlay(editPre, overlay)
+      return
+    } catch (_) { /* fall through to plain */ }
+  }
+  overlay.textContent = text // plain mirror: ink still visible through transparency
+  positionEditOverlay(editPre, overlay)
+}
+
+/** Pin the body-level fixed overlay onto the editing code's box. The layer
+ *  cannot live inside the editing container: vditor's own input handling
+ *  scans that subtree and a foreign node there flips the block out of edit
+ *  mode on the first keystroke (verified against vanilla vditor). */
+function positionEditOverlay(editPre: HTMLPreElement, overlay: HTMLElement) {
+  const code = (editPre.querySelector(':scope > code') as HTMLElement) || editPre
+  const r = code.getBoundingClientRect()
+  overlay.style.left = r.left + 'px'
+  overlay.style.top = r.top + 'px'
+  overlay.style.width = r.width + 'px'
+}
+
+/** The editing state of one block: the class drives the shell-preserving
+ *  layout, the mirror renders the highlight behind the transparent text.
+ *  Block and mirror are cross-linked via expandos. */
+function isEditingPre(p: Element): boolean {
+  return !/none/.test(p.getAttribute('style') || '')
+}
+
+/** Recompute EVERY editing block's mirror from current DOM truth. Called at
+ *  mutation-batch end so the outcome never depends on mutation order —
+ *  which matters because vditor switches editing between two blocks by
+ *  activating the NEW block first and retiring the OLD one only ~200ms
+ *  later (verified with a frame probe on the live editor). During that
+ *  window BOTH blocks are in edit mode and each transparent text needs its
+ *  own mirror; a single shared layer would be stolen by the new block and
+ *  the old block's text would visibly flash away.
+ *
+ *  Retirement runs BEFORE re-pinning: removing a retired block's editing
+ *  class restores its preview code, which shifts the layout of every block
+ *  below it. Measuring the survivors' rects before that shift pins their
+ *  mirrors to transient collapsed geometry — observed live as the mirror
+ *  floating ~155px above its block after a two-block switch. */
+function refreshEditOverlays() {
+  const editing = new Set<HTMLElement>()
+  const editPres: HTMLPreElement[] = []
+  for (const p of Array.from(document.querySelectorAll('pre.vditor-wysiwyg__pre'))) {
+    if (!isEditingPre(p)) continue
+    const block = p.parentElement
+    if (!(block instanceof HTMLElement)) continue
+    editing.add(block)
+    editPres.push(p as HTMLPreElement)
+  }
+  // Phase 1 — retire: mirrors whose block left edit mode (or was removed
+  // wholesale) go away, together with the editing class. This changes the
+  // document layout; survivors are pinned only after it settles.
+  for (const ov of Array.from(document.querySelectorAll('body > .vmd-cb-edit-hl'))) {
+    const block = (ov as any).__vmdBlock as HTMLElement | undefined
+    if (block && editing.has(block)) continue
+    ov.remove()
+    if (block) block.classList.remove('vmd-cb--editing')
+  }
+  // Defensive sweep: an editing class whose pre is no longer visible (block
+  // replaced without the old one being retired) must not linger either.
+  for (const b of Array.from(document.querySelectorAll('.vmd-cb--editing'))) {
+    if (!editing.has(b as HTMLElement)) (b as HTMLElement).classList.remove('vmd-cb--editing')
+  }
+  // Phase 2 — pin survivors against the post-retirement layout.
+  for (const p of editPres) {
+    const block = p.parentElement as HTMLElement
+    block.classList.add('vmd-cb--editing')
+    const w = block as any
+    let ov = w.__vmdOverlay as HTMLElement | undefined
+    if (!ov || !ov.isConnected) {
+      ov = document.createElement('div')
+      ov.className = 'vmd-cb-edit-hl'
+      ov.setAttribute('aria-hidden', 'true')
+      ;(ov as any).__vmdBlock = block
+      w.__vmdOverlay = ov
+      document.body.appendChild(ov)
+      // Mirror the editing code's typography exactly so the colored layer
+      // sits pixel-perfect behind the transparent foreground text. Copy
+      // font LONGHAND by longhand: Chromium's computed `font` shorthand
+      // serializes to "" for many perfectly ordinary combinations, and an
+      // empty assignment silently drops the whole declaration (the mirror
+      // then renders at the body default — 16px vs the code's 13.6px, text
+      // visibly offset). (jsdom computes these as empty strings — the plain
+      // fallback still works.)
+      const cs = getComputedStyle(codeOf(p))
+      ov.style.fontStyle = cs.fontStyle
+      ov.style.fontVariant = cs.fontVariant
+      ov.style.fontWeight = cs.fontWeight
+      ov.style.fontStretch = cs.fontStretch
+      ov.style.fontSize = cs.fontSize
+      ov.style.fontFamily = cs.fontFamily
+      ov.style.letterSpacing = cs.letterSpacing
+      ov.style.whiteSpace = cs.whiteSpace
+      ov.style.lineHeight = cs.lineHeight
+      ov.style.padding = cs.padding
+      ov.style.tabSize = cs.tabSize
+      renderEditOverlay(p, ov) // fresh mirror: content now
+    } else {
+      positionEditOverlay(p, ov) // existing: re-pin only
+    }
+  }
+  // Phase 3 — the layout may still drift after this batch (the retirement
+  // above only takes effect on the next style/layout pass, and vditor keeps
+  // re-rendering around a switch). Re-pin once on a settled frame.
+  scheduleOverlaySettle()
+}
+
+/** One double-rAF re-pin of every live mirror. Cheap insurance against any
+ *  geometry that was measured mid-transition; idempotent, self-deduping. */
+let overlaySettlePending = false
+function scheduleOverlaySettle() {
+  if (overlaySettlePending) return
+  overlaySettlePending = true
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      overlaySettlePending = false
+      for (const p of Array.from(document.querySelectorAll('pre.vditor-wysiwyg__pre'))) {
+        if (!isEditingPre(p)) continue
+        const ov = (p.parentElement as any)?.__vmdOverlay as HTMLElement | undefined
+        if (ov && ov.isConnected) positionEditOverlay(p as HTMLPreElement, ov)
+      }
+    })
+  })
+}
+
+function codeOf(editPre: HTMLPreElement): HTMLElement {
+  return (editPre.querySelector(':scope > code') as HTMLElement) || editPre
+}
+
 /** Keyboard activation for the header bar (role=button): Enter/Space when
  *  the bar ITSELF is focused. Registered at MODULE LOAD (before vditor
  *  init) on the WINDOW CAPTURE phase — the earliest possible interception:
@@ -352,12 +518,61 @@ export function installCodeBlockEnhancer() {
     // Keyboard activation lives in installHeaderKeyActivation() — see the
     // registration-order note there.
 
+    // Edit-mode mirror: typing in a plain editing pre re-renders its
+    // highlight overlay (debounced). vditor REPLACES the editing block in
+    // place on every keystroke, so each input first re-syncs (idempotent):
+    // the fresh block must regain the editing class and its own mirror,
+    // otherwise a stale fixed layer would double the text. Scrolling (page,
+    // editor container, the editing pre itself) re-pins every live mirror.
+    document.addEventListener('input', (e) => {
+      const editPre = (e.target as HTMLElement | null)?.closest?.('pre.vditor-wysiwyg__pre')
+      if (!(editPre instanceof HTMLPreElement)) return
+      refreshEditOverlays()
+      const ov = (editPre.parentElement as any)?.__vmdOverlay as HTMLElement | undefined
+      if (!ov || !ov.isConnected) return
+      const prev = overlayTimers.get(editPre)
+      if (prev) clearTimeout(prev)
+      overlayTimers.set(editPre, setTimeout(() => renderEditOverlay(editPre, ov), 60))
+    }, true)
+    document.addEventListener('scroll', (e) => {
+      for (const p of Array.from(document.querySelectorAll('pre.vditor-wysiwyg__pre'))) {
+        if (!isEditingPre(p)) continue
+        const ov = (p.parentElement as any)?.__vmdOverlay as HTMLElement | undefined
+        if (!ov || !ov.isConnected) continue
+        positionEditOverlay(p as HTMLPreElement, ov)
+        // horizontal scrolling inside the editing pre itself
+        if (e.target === p) ov.scrollLeft = (p as HTMLElement).scrollLeft
+      }
+    }, true)
+
     // Observe the whole body: vditor re-renders code blocks by replacing the
     // preview <pre> nodes (headers are lost with the old nodes), and rebuilds
-    // the entire editor on theme changes. Our own insertions don't match
+    // the entire editor on theme changes. Style mutations matter too: vditor
+    // flips a plain editing pre visible/hidden via inline style when a code
+    // block enters/leaves edit mode. Our own insertions don't match
     // PRE_SELECTOR, so there is no observer feedback loop.
+    // ANY change to a block's pre pair (added, removed, restyled — editing
+    // or preview) marks the batch: vditor retires an editing block through
+    // at least two paths (inline style flip vs wholesale node replacement,
+    // the latter observed live when SWITCHING editing between two blocks),
+    // and the layout shift a retirement causes must re-pin every live
+    // mirror, or one stays pinned to the transient collapsed geometry.
+    const touchesEditDom = (node: HTMLElement): boolean =>
+      node.matches('pre.vditor-wysiwyg__pre, pre.vditor-wysiwyg__preview') ||
+      node.querySelector('pre.vditor-wysiwyg__pre, pre.vditor-wysiwyg__preview') !== null
     const observer = new MutationObserver((mutations) => {
+      let editDomTouched = false
       for (const m of mutations) {
+        if (m.type === 'attributes') {
+          if (
+            m.target instanceof HTMLPreElement &&
+            (m.target.classList.contains('vditor-wysiwyg__pre') ||
+              m.target.classList.contains('vditor-wysiwyg__preview'))
+          ) {
+            editDomTouched = true
+          }
+          continue
+        }
         // vditor's language-edit path (wysiwyg language input / ir hint,
         // VD:7684 / VD:11690) rewrites a preview pre's innerHTML IN PLACE:
         // the <pre> node itself survives while its children (including our
@@ -375,14 +590,29 @@ export function installCodeBlockEnhancer() {
         // (no DOM.Iterable); Array.from keeps the check green.
         for (const node of Array.from(m.addedNodes)) {
           if (!(node instanceof HTMLElement)) continue
+          if (touchesEditDom(node)) editDomTouched = true
           if (node.matches(PRE_SELECTOR)) decorate(node as HTMLPreElement)
           else if (node.querySelectorAll(PRE_SELECTOR).length > 0) {
             decorateAll(node)
           }
         }
+        for (const node of Array.from(m.removedNodes)) {
+          if (node instanceof HTMLElement && touchesEditDom(node)) {
+            editDomTouched = true
+          }
+        }
       }
+      // One recompute per batch, AFTER all mutations: mirror ownership must
+      // reflect the batch's final DOM state, never the mutation order (see
+      // the two-block-switch note on refreshEditOverlays).
+      if (editDomTouched) refreshEditOverlays()
     })
-    observer.observe(document.body, { childList: true, subtree: true })
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['style'],
+    })
   }
 
   // Sweep blocks that exist right now (initial render / rebuild).
