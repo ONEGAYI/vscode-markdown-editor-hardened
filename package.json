@@ -3,7 +3,7 @@
   "displayName": "Markdown Editor (Hardened)",
   "icon": "media/logo.png",
   "description": "A security-hardened WYSIWYG editor for markdown. Fork of zaaack.markdown-editor with: enableCommandUris removed (closes RCE via crafted markdown command: URIs), customCss XSS vector removed, localResourceRoots scoped, CSP added, jsdelivr CDN dependency removed (vditor + Lute bundled locally), vditor bumped to 3.11.x.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "ONEGAYI",
   "private": true,
   "engines": {

@@ -11,6 +11,23 @@ Earlier releases used `upstream + -hardened.<N>` tags; that suffix collides
 with semver pre-release semantics (the VS Marketplace rejects it) and was
 dropped.
 
+## [Unreleased]
+
+## [0.2.1] — 2026-09-15
+
+修复浅色主题下长代码块滚动时工具栏与代码"都看不清"的问题：工具栏
+背景与代码区色差原本仅约 3.5% 且无任何边框阴影，滚动代码的顶缘紧贴
+工具栏下缘硬切，两者糊成一片。现工具栏改为完全实底（视觉色与代码区
+同源）、微降一档明度并以下缘柔和投影分界；同时移除从未生效的无效
+吸顶定位（vditor 的滚动容器是 `code` 元素而非工具栏所在的 `pre`）。
+基点对账：上游基点仍为 upstream main@033c624，无上游变更。
+
+### 修复
+
+- **代码块工具栏与滚动代码的层次分界**（PR #2）：实底多层背景
+  （半透明主题变量叠不透明编辑器背景，任何主题下代码不会透出）、
+  4.5% 微降明度层、下缘投影缓冲滚动切割、按钮避让滚动条轨道。
+
 ## [0.2.0] — 2026-09-15
 
 本版聚焦代码块体验：每个代码块新增常驻工具栏（语言名 + 按块自动换行
@@ -372,7 +389,8 @@ The currently-published Marketplace version of
 Still vulnerable to all seven audit findings (H1, H2, H3, H4, H5, H6, H9).
 
 <!-- 变更链接 -->
-[Unreleased]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.1.21-hardened.2...v0.2.0
 [0.1.21-hardened.2]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.1.21-hardened.1...v0.1.21-hardened.2
 [0.1.21-hardened.1]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/commits/v0.1.21-hardened.1
