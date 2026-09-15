@@ -201,6 +201,12 @@ body,
    * inner vertical scrollbar (page scroll + block scroll at the same time).
    * Unset it: blocks grow to their natural height and only the page scrolls. */
   max-height: none !important;
+  /* Preview AND editing code must render with the SAME font stack (the
+   * editor variable): vditor hardcodes its own "mononoki, ..." stack here
+   * as a DIRECT rule, which beats the inherited .vditor-reset font — on a
+   * machine where mononoki resolves, preview and edit mode would render
+   * different faces and the text would jump on every toggle. */
+  font-family: var(--vscode-editor-font-family, 'Menlo', 'Monaco', monospace) !important;
   padding: 0 !important;
   border-radius: 0 !important;
 }
@@ -210,6 +216,18 @@ body,
 .vditor-reset pre div.vditor-copy,
 .vditor-reset pre:hover div.vditor-copy {
   display: none !important;
+}
+
+/* The PLAIN editing pre (wysiwyg code-block edit mode) lives inside
+ * .vditor-wysiwyg, where vditor's own rule pins "Consolas, ..." on it —
+ * NOT the editor font stack the preview code renders with. The two stacks
+ * must match, or the text visibly jumps when the block enters/leaves edit
+ * mode on machines where the first family resolves differently, and the
+ * highlight mirror (which copies the editing code's computed font) drags
+ * the same mismatch along. */
+.vditor-wysiwyg pre.vditor-wysiwyg__pre,
+.vditor-wysiwyg pre.vditor-wysiwyg__pre code {
+  font-family: var(--vscode-editor-font-family, 'Menlo', 'Monaco', monospace) !important;
 }
 
 /* ============================================================

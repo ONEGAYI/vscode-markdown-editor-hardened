@@ -58,7 +58,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function boot(mode) {
   const virtualConsole = new VirtualConsole();
   const pageErrors = [];
-  virtualConsole.on('jsdomError', (err) => pageErrors.push(err));
+  virtualConsole.on('jsdomError', (err) => {
+    pageErrors.push(err);
+    if (process.env.VMD_PROBE_STACK) console.log('[stack]', err && err.stack ? err.stack.split('\n').slice(0, 8).join('\n') : err);
+  });
 
   const dom = new JSDOM('<!DOCTYPE html><html><head></head><body><div id="app"></div></body></html>', {
     runScripts: 'dangerously',
@@ -216,30 +219,217 @@ async function testMode(mode, checks) {
       !!name && name.textContent === 'JSON');
   }
 
-  // mermaid is rendered by vditor's own diagram pipeline — its <code> may be
-  // replaced entirely, so search ALL preview pres (not just code-bearing ones).
-  const mermaidPre = previewPres(document).find((pre) => !!pre.querySelector('code.language-mermaid'));
-  const mermaidAny = mermaidPre || document.querySelector('code.language-mermaid')?.closest('pre');
+  // mermaid is rendered by vditor's own diagram pipeline — the preview side
+  // carries a <div class="language-mermaid"> (not a <code>), so search ALL
+  // preview pres for EITHER shape.
+  const mermaidPre = previewPres(document).find((pre) =>
+    !!pre.querySelector('code.language-mermaid, div.language-mermaid'));
+  const mermaidAny = mermaidPre ||
+    document.querySelector('code.language-mermaid, div.language-mermaid')?.closest('pre');
   if (mode !== 'sv') {
     // SV's preview side handles diagram blocks through a different pipeline
     // (no code.language-mermaid element survives there), so only wysiwyg/ir
     // can assert on the block's presence.
     add('mermaid block exists in DOM', !!mermaidAny);
   }
-  add('mermaid block gets NO header (when present)', !mermaidAny || !headerOf(mermaidAny));
+  if (mode !== 'wysiwyg') {
+    // Outside wysiwyg the diagram skip list still applies: no decorations.
+    add('mermaid block gets NO header (when present)', !mermaidAny || !headerOf(mermaidAny));
+  }
+
+  // ── diagram interaction contract (wysiwyg only) ─────────────────────────
+  // A rendered figure is a VIEWING surface, not a click-to-edit one: the raw
+  // click on the figure must be swallowed (selecting/copying rendered text
+  // used to flip the block into edit mode), and the ONLY entry is a </> pill
+  // that appears on hover. Once editing, the block behaves like any other
+  // code block: header bar + plain-source mirror.
+  if (mode === 'wysiwyg' && mermaidPre) {
+    const mBlock = mermaidPre.closest('.vditor-wysiwyg__block');
+    const mEditPre = mBlock.querySelector('pre.vditor-wysiwyg__pre');
+    add('diagram preview carries the diagram modifier class',
+      mermaidPre.classList.contains('vmd-cb--diagram'));
+    add('diagram block gets a header (edit-mode toolbar)', !!headerOf(mermaidPre));
+    const mEditBtn = mermaidPre.querySelector(':scope > .vmd-cb-edit-btn');
+    add('diagram block has a hover </> edit pill', !!mEditBtn);
+    add('edit pill lives outside the header',
+      !!mEditBtn && !!headerOf(mermaidPre) && !headerOf(mermaidPre).contains(mEditBtn));
+    add('diagram edit pre starts hidden (precondition)',
+      mEditPre.style.display === 'none');
+
+    // Raw click on the rendered figure: stays in preview. The figure lives
+    // in a <div class="language-mermaid"> (mermaid swaps its text for an SVG).
+    mermaidPre.querySelector('div.language-mermaid, code.language-mermaid').click();
+    await sleep(300);
+    add(`clicking the rendered figure stays in preview (edit pre display "${mEditPre.style.display}")`,
+      mEditPre.style.display === 'none');
+
+    // Clicking the </> pill enters edit mode, exactly like any other block.
+    mEditBtn.click();
+    let diagramEditing = false;
+    let diagramMirror = false;
+    for (let i = 0; i < 20; i++) {
+      await sleep(100);
+      diagramEditing = mBlock.classList.contains('vmd-cb--editing');
+      const ov = document.querySelector('body > .vmd-cb-edit-hl');
+      if (diagramEditing && ov && ov.textContent.includes('graph TD')) {
+        diagramMirror = true; break;
+      }
+    }
+    add('</> pill enters edit mode (editing class + own mirror)', diagramEditing && diagramMirror);
+
+    // Copy on a diagram block must read the SOURCE from the editing pre —
+    // the preview side holds the figure (SVG once rendered), whose text is
+    // the drawn labels, not the fence source.
+    const mFigure = mermaidPre.querySelector('div.language-mermaid, code.language-mermaid');
+    const mSource = mEditPre.querySelector('code').textContent.replace(/\n$/, '');
+    mFigure.textContent = 'SVG figure label noise';
+    copied.length = 0;
+    headerOf(mermaidPre).querySelector('.vmd-cb-copy').click();
+    await sleep(30);
+    add(`diagram copy writes the source, not figure text (got ${JSON.stringify(copied)})`,
+      copied.length === 1 && copied[0] === mSource);
+
+    // Leaving edit mode retires the mirror (shared retirement path). The
+    // entry was a REAL click, so the selection sits inside the diagram's
+    // code — move it to the document start first (a real click elsewhere
+    // always leaves exactly one range; an empty/document-anchored selection
+    // never occurs in a live browser and vditor's input path mis-handles
+    // both shapes in jsdom).
+    const strayAnchor = document.querySelector('.vditor-wysiwyg p') || document.body;
+    const strayRange = document.createRange();
+    strayRange.selectNodeContents(strayAnchor);
+    strayRange.collapse(true);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(strayRange);
+    mEditPre.setAttribute('style', 'display: none;');
+    let diagramRetired = false;
+    for (let i = 0; i < 20; i++) {
+      await sleep(100);
+      if (!document.querySelector('body > .vmd-cb-edit-hl') && !mBlock.classList.contains('vmd-cb--editing')) {
+        diagramRetired = true; break;
+      }
+    }
+    add('leaving diagram edit mode removes the mirror', diagramRetired);
+
+    // In-figure links (mermaid securityLevel loose): the figure guard must
+    // swallow figure clicks, NOT link clicks — the link's own click handlers
+    // (this extension's fixLinkClick / vditor's A branch) must still see it.
+    const linkSeen = [];
+    const wysiwygEl = document.querySelector('.vditor-wysiwyg');
+    const onWysClick = () => linkSeen.push(true);
+    wysiwygEl.addEventListener('click', onWysClick);
+    const figLink = document.createElement('a');
+    figLink.href = 'https://example.com/';
+    figLink.textContent = 'figure link';
+    mermaidPre.querySelector('div.language-mermaid, code.language-mermaid').appendChild(figLink);
+    figLink.click();
+    add('in-figure link clicks are not swallowed by the figure guard', linkSeen.length > 0);
+    add('in-figure link click does not enter edit mode', mEditPre.style.display === 'none');
+    wysiwygEl.removeEventListener('click', onWysClick);
+
+    // vditor's Undo.addCaret restores diagram blocks by checking the preview
+    // pre's FIRST element child for language-echarts/-math/… classes — our
+    // header/pill must not take that slot.
+    add('diagram decorations leave the figure as firstElementChild',
+      mermaidPre.firstElementChild.classList.contains('language-mermaid'));
+
+    // $$ math blocks are NOT fenced code blocks: Lute emits a bare source
+    // pre (no vditor-wysiwyg__pre class) inside a data-type="math-block"
+    // container. The diagram contract must not hijack them — their editing
+    // state has no shell/mirror support and copy would yield "".
+    const mathHost = document.createElement('div');
+    mathHost.innerHTML =
+      '<div class="vditor-wysiwyg__block" data-type="math-block" data-block="0">' +
+      '<pre style="display:none"><code data-type="math-block">x^2 + y = z\n</code></pre>' +
+      '<pre class="vditor-wysiwyg__preview" data-render="1"><div data-type="math-block" class="language-math">x^2</div></pre>' +
+      '</div>';
+    document.querySelector('.vditor-wysiwyg').appendChild(mathHost.firstElementChild);
+    await sleep(300); // observer sweep decorates the new block
+    const mathPreview = document.querySelector('[data-type="math-block"] > pre.vditor-wysiwyg__preview');
+    add('$$ math blocks are not hijacked by the diagram contract',
+      !mathPreview.classList.contains('vmd-cb--diagram') &&
+      !headerOf(mathPreview) &&
+      !mathPreview.querySelector('.vmd-cb-edit-btn'));
+
+    // vditor's language-edit path rewrites the preview pre's innerHTML IN
+    // PLACE. Switching a diagram fence to a plain language must fully undo
+    // the diagram contract — a lingering vmd-cb--diagram class would hide
+    // the rebuilt header AND swallow the block's clicks (zombie block).
+    mEditPre.querySelector('code').className = 'language-js';
+    mermaidPre.innerHTML = '<code class="language-js">console.log(1)\n</code>';
+    await sleep(300); // observer → decorate reruns on the rewritten pre
+    add('switching a diagram block to a plain language clears the diagram modifier',
+      !mermaidPre.classList.contains('vmd-cb--diagram'));
+    add('switched block gets a normal (visible) header', !!headerOf(mermaidPre));
+    mermaidPre.querySelector('code').click();
+    add('switched block is clickable into edit mode again', mEditPre.style.display === 'block');
+
+    // focusEditAt's browser path, stubbed three ways: a hit inside this
+    // block's code is adopted; a point that drifted outside the block and an
+    // API that throws both fall back to the code start.
+    const mCode = mEditPre.querySelector('code');
+    const leaveEdit = async () => {
+      window.getSelection().removeAllRanges();
+      const anchor = document.querySelector('.vditor-wysiwyg p') || document.body;
+      const r = document.createRange();
+      r.selectNodeContents(anchor);
+      r.collapse(true);
+      window.getSelection().addRange(r);
+      mEditPre.setAttribute('style', 'display: none;');
+      await sleep(250);
+    };
+    const caretDesc = () => {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return null;
+      const rg = sel.getRangeAt(0);
+      return rg.startContainer === mCode
+        ? 'code:0'
+        : (rg.startContainer.nodeType === 3 ? 'text:' + rg.startOffset : rg.startContainer.nodeName);
+    };
+    // (a) hit inside this block's code → adopted verbatim
+    await leaveEdit();
+    const hitText = mCode.firstChild;
+    const hitRange = document.createRange();
+    hitRange.setStart(hitText, 12);
+    hitRange.collapse(true);
+    document.caretRangeFromPoint = () => hitRange;
+    mermaidPre.querySelector('code').click();
+    add('caret from point: an in-block hit is adopted (got ' + caretDesc() + ')',
+      caretDesc() === 'text:12');
+    // (b) point drifted outside the block → first-char fallback
+    await leaveEdit();
+    const strayHit = document.createRange();
+    strayHit.selectNodeContents(document.querySelector('.vditor-wysiwyg p') || document.body);
+    document.caretRangeFromPoint = () => strayHit;
+    mermaidPre.querySelector('code').click();
+    add('caret from point: an out-of-block hit falls back to code start (got ' + caretDesc() + ')',
+      caretDesc() === 'code:0');
+    // (c) API throws → first-char fallback
+    await leaveEdit();
+    document.caretRangeFromPoint = () => { throw new Error('boom'); };
+    mermaidPre.querySelector('code').click();
+    add('caret from point: an API error falls back to code start (got ' + caretDesc() + ')',
+      caretDesc() === 'code:0');
+    delete document.caretRangeFromPoint;
+    await leaveEdit();
+  }
 
   // ── wrap toggle ──
   const pre = jsoncPre.parentElement;
+  // In wysiwyg the wrap class rides the BLOCK container so it also governs
+  // the editing pre's code (which is a SIBLING of the preview pre); in ir/sv
+  // there is no block wrapper and the class stays on the preview pre itself.
+  const wrapHost = mode === 'wysiwyg' ? pre.closest('.vditor-wysiwyg__block') : pre;
   const wrapBtn = pre.querySelector('.vmd-cb-wrap');
   if (!wrapBtn) {
     add('wrap/copy buttons present — skipping interaction checks (decorator not run?)', false);
     return;
   }
-  add('wrap off by default', !pre.classList.contains('vmd-cb--wrap'));
+  add('wrap off by default', !wrapHost.classList.contains('vmd-cb--wrap'));
   wrapBtn.click();
-  add('wrap button enables wrap class', pre.classList.contains('vmd-cb--wrap'));
+  add('wrap button enables wrap class', wrapHost.classList.contains('vmd-cb--wrap'));
   wrapBtn.click();
-  add('wrap button toggles wrap off again', !pre.classList.contains('vmd-cb--wrap'));
+  add('wrap button toggles wrap off again', !wrapHost.classList.contains('vmd-cb--wrap'));
 
   // ── copy ──
   const copyBtn = pre.querySelector('.vmd-cb-copy');
@@ -328,7 +518,7 @@ async function testMode(mode, checks) {
   bar.click();
   add('click on the bar expands the block again', !pre.classList.contains('vmd-cb--collapsed'));
   add('expanded bar sets aria-expanded="true"', bar.getAttribute('aria-expanded') === 'true');
-  add('bar clicks never touch the wrap state', !pre.classList.contains('vmd-cb--wrap'));
+  add('bar clicks never touch the wrap state', !wrapHost.classList.contains('vmd-cb--wrap'));
   // Keyboard activation (role=button): Enter and Space both toggle.
   bar.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
   add('Enter on the bar collapses the block', pre.classList.contains('vmd-cb--collapsed'));
@@ -338,6 +528,180 @@ async function testMode(mode, checks) {
   wrapBtn.click();
   add('action-button clicks do not collapse the block', !pre.classList.contains('vmd-cb--collapsed'));
   wrapBtn.click();
+
+  // ── edit-mode syntax highlighting overlay (wysiwyg only) ──
+  // Clicking the code area flips vditor's plain editing pre visible (inline
+  // display:block). The enhancer must mount a highlight MIRROR behind the
+  // transparent editing text so the block stays highlighted WHILE editing,
+  // re-render it on every input, and remove it when editing ends.
+  if (mode === 'wysiwyg') {
+    // Entering edit mode is OUR delegated takeover now: a raw click on the
+    // preview text must flip the editing pre visible (jsdom has no
+    // caretRangeFromPoint, so the caret lands via the first-char fallback)
+    // AND place the caret inside the editing code — never a no-op.
+    const tBlock = pre.closest('.vditor-wysiwyg__block');
+    const tEditPre = tBlock.querySelector('pre.vditor-wysiwyg__pre');
+    pre.click(); // raw click on the preview text area (not the header)
+    const sel = window.getSelection();
+    add('clicking the preview enters edit mode (takeover flips the editing pre)',
+      tEditPre.style.display === 'block');
+    add('takeover places the caret inside the editing code',
+      sel && sel.rangeCount === 1 && tEditPre.querySelector('code').contains(sel.getRangeAt(0).startContainer));
+    // A REAL click also lands the selection inside the block, so vditor's
+    // selectionchange handler re-renders the document and REPLACES the block
+    // nodes. Wait for that to settle, then re-bind fresh references — every
+    // assertion below must run against the post-render DOM.
+    await sleep(300);
+    let block = document.querySelector('pre.vditor-wysiwyg__preview code.language-jsonc')
+      .closest('.vditor-wysiwyg__block');
+    let editPre = block.querySelector('pre.vditor-wysiwyg__pre');
+    editPre.setAttribute('style', 'display: block;'); // idempotent: stay in edit mode
+    let overlay = null;
+    for (let i = 0; i < 30; i++) { await sleep(100); overlay = document.querySelector('body > .vmd-cb-edit-hl'); if (overlay) break; }
+    add('editing pre visible mounts the highlight overlay (body-level, outside the editor DOM)', !!overlay);
+    add('block marked vmd-cb--editing (transparent foreground)', block.classList.contains('vmd-cb--editing'));
+    add(`overlay mirrors the editing text (got ${JSON.stringify(overlay && overlay.textContent.trim())})`, !!overlay && overlay.textContent.trim() === '{ "a": 1 }');
+    const hljsSpans = overlay ? overlay.querySelectorAll('[class^="hljs-"]').length : 0;
+    add(`overlay renders hljs tokens (got ${hljsSpans} spans)`, hljsSpans > 0);
+    // typing syncs the mirror (debounced). NOTE: with the takeover the
+    // selection really lives inside the block, so each input dispatch now
+    // triggers vditor's per-keystroke block REPLACEMENT (exactly what the
+    // live editor does) — re-bind node references after every dispatch.
+    const rebind = () => {
+      block = document.querySelector('pre.vditor-wysiwyg__preview code.language-jsonc')
+        .closest('.vditor-wysiwyg__block');
+      editPre = block.querySelector('pre.vditor-wysiwyg__pre');
+    };
+    editPre.querySelector('code').textContent = '{ "edited": true }\n';
+    editPre.dispatchEvent(new window.Event('input', { bubbles: true }));
+    let synced = false;
+    // poll the LIVE mirror: the block replacement below retires the mount-time
+    // overlay element, so the captured reference would never see the update
+    for (let i = 0; i < 20; i++) { await sleep(100); const ov = document.querySelector('body > .vmd-cb-edit-hl'); if (ov && ov.textContent.includes('edited')) { synced = true; break; } }
+    add('overlay content follows edits', synced);
+    rebind();
+    editPre.setAttribute('style', 'display: block;'); // the caret block carries no style — stay explicit
+    // Editing-state detection must key on the DISPLAY property alone: vditor
+    // hides an inactive editing pre via display:none, and Lute's caret-block
+    // re-render omits the style attribute entirely — but the raw attribute
+    // can legitimately carry other declarations. A substring match on
+    // "none" would misjudge `user-select: none` as retired and drop the
+    // mirror mid-edit (transparent text left with no ink).
+    editPre.setAttribute('style', 'display: block; user-select: none;');
+    let staysEditing = false;
+    for (let i = 0; i < 10; i++) {
+      await sleep(100);
+      if (document.querySelector('body > .vmd-cb-edit-hl') && block.classList.contains('vmd-cb--editing')) { staysEditing = true; break; }
+    }
+    add('unrelated "none" declarations do not retire the mirror', staysEditing);
+    rebind();
+    editPre.setAttribute('style', 'display: block;'); // restore the plain form
+    await sleep(150);
+    // IME composition frames must paint ink IMMEDIATELY (not on the 60ms
+    // trailing debounce): during composition vditor takes its light path
+    // and never rebuilds the block, while the editing text is transparent —
+    // trailing-edge-only updates would hide the composed characters.
+    editPre.querySelector('code').textContent = '{ "组词": true }\n';
+    editPre.dispatchEvent(new window.InputEvent('input', { bubbles: true, isComposing: true }));
+    let composedVisible = false;
+    // 40ms window — deliberately shorter than the 60ms debounce so only the
+    // immediate path can satisfy this check.
+    for (let i = 0; i < 2; i++) { await sleep(20);
+      const ov = document.querySelector('body > .vmd-cb-edit-hl');
+      if (ov && ov.textContent.includes('组词')) { composedVisible = true; break; } }
+    add('IME composition frames mirror text immediately', composedVisible);
+    rebind();
+    editPre.querySelector('code').textContent = '{ "edited": true }\n'; // restore for the scenarios below
+    // vditor REPLACES the editing block in place on every keystroke — the
+    // input handler must re-sync the fresh block (editing class + mirror).
+    const fresh = block.cloneNode(true);
+    // Lute re-renders the caret block WITHOUT the style attribute entirely
+    // (only non-caret blocks carry style="display: none"); clone the same
+    // shape or the test would lock a contract vditor never emits.
+    fresh.querySelector('pre.vditor-wysiwyg__pre').removeAttribute('style');
+    block.parentNode.replaceChild(fresh, block);
+    fresh.querySelector('pre.vditor-wysiwyg__pre').dispatchEvent(new window.Event('input', { bubbles: true }));
+    let reattached = false;
+    for (let i = 0; i < 20; i++) {
+      await sleep(100);
+      if (fresh.classList.contains('vmd-cb--editing') && document.querySelector('body > .vmd-cb-edit-hl')) { reattached = true; break; }
+    }
+    add('editing overlay re-attaches after vditor rebuilds the block', reattached);
+    // leaving edit mode tears the overlay down
+    const freshEdit = fresh.querySelector('pre.vditor-wysiwyg__pre');
+    freshEdit.setAttribute('style', 'display: none;');
+    let gone = false;
+    for (let i = 0; i < 20; i++) { await sleep(100); if (!document.querySelector('body > .vmd-cb-edit-hl') && !fresh.classList.contains('vmd-cb--editing')) { gone = true; break; } }
+    add('leaving edit mode removes the overlay', gone);
+
+    // ── two-block switch: vditor activates the NEW block first and retires
+    // the OLD one only ~200ms later (verified against the live editor with a
+    // frame probe). During that window BOTH blocks are in edit mode, so each
+    // needs its OWN mirror — a single shared layer gets stolen by the new
+    // block and the old block's transparent text is left unmirrored, which
+    // the user sees as the block's text "flashing" away.
+    const overlays = () => Array.from(document.querySelectorAll('body > .vmd-cb-edit-hl'));
+    freshEdit.setAttribute('style', 'display: block;'); // A (jsonc) edits again
+    let aMirrored = false;
+    for (let i = 0; i < 20; i++) { await sleep(100); if (overlays().some((o) => o.textContent.includes('edited'))) { aMirrored = true; break; } }
+    add('re-entering edit mode re-mounts the mirror', aMirrored);
+    const pyBlock = Array.from(document.querySelectorAll('.vditor-wysiwyg__block'))
+      .find((b) => b.querySelector('pre.vditor-wysiwyg__preview code.language-python'));
+    const pyEdit = pyBlock && pyBlock.querySelector('pre.vditor-wysiwyg__pre');
+    pyEdit.setAttribute('style', 'display: block;'); // B enters BEFORE A retires
+    await sleep(300); // both blocks edit-mode at once — vditor's real order
+    add(`old block keeps its own mirror while the new block edits (got ${overlays().length})`,
+      overlays().some((o) => o.textContent.includes('edited')));
+    add('new block gets its own mirror',
+      overlays().some((o) => o.textContent.includes('def hello')));
+    add('both blocks carry the editing class',
+      fresh.classList.contains('vmd-cb--editing') && !!pyBlock && pyBlock.classList.contains('vmd-cb--editing'));
+    // Scroll re-pins mirrors via the capture-phase delegate; it must never
+    // tear them down or error while blocks are live.
+    window.dispatchEvent(new window.Event('scroll'));
+    document.querySelector('.vditor').dispatchEvent(new window.Event('scroll', { bubbles: false }));
+    await sleep(100);
+    add(`scroll events keep live mirrors mounted (got ${overlays().length})`, overlays().length === 2);
+    // A retires while B keeps editing — only A's mirror goes away.
+    freshEdit.setAttribute('style', 'display: none;');
+    await sleep(300);
+    add(`retiring the old block removes only its mirror (got ${overlays().length})`,
+      overlays().length === 1 && overlays()[0].textContent.includes('def hello'));
+    add('retired block loses the editing class', !fresh.classList.contains('vmd-cb--editing'));
+    // B retires too — everything is cleaned up.
+    pyEdit.setAttribute('style', 'display: none;');
+    await sleep(300);
+    add(`last block leaving edit mode clears all overlays (got ${overlays().length})`, overlays().length === 0);
+
+    // ── block-retirement via NODE REPLACEMENT must also resync mirrors ──
+    // vditor has a second retirement path: instead of flipping the editing
+    // pre's inline style, it rebuilds the old block wholesale (no style
+    // mutation at all). If that batch doesn't trigger the recompute, the
+    // retired block's mirror ORPHANS on the body (a fixed layer painted over
+    // unrelated content) and other live mirrors never re-pin after the
+    // layout shift — both seen live as "text escaping the block".
+    freshEdit.setAttribute('style', 'display: block;'); // A edits again
+    pyEdit.setAttribute('style', 'display: block;');    // B edits too
+    await sleep(300);
+    add('two mirrors mounted before the replacement path', overlays().length === 2);
+    // Replace block A with a rebuilt NORMAL-state clone — childList only,
+    // no editing-pre style mutation on the old block.
+    const rebuiltA = fresh.cloneNode(true);
+    rebuiltA.classList.remove('vmd-cb--editing');
+    rebuiltA.querySelector('pre.vditor-wysiwyg__pre').setAttribute('style', 'display: none;');
+    fresh.parentNode.replaceChild(rebuiltA, fresh);
+    let orphanGone = false;
+    for (let i = 0; i < 20; i++) {
+      await sleep(100);
+      const live = overlays();
+      // A's mirror must be gone; B's mirror must survive the resync.
+      if (live.length === 1 && live[0].textContent.includes('def hello') && !rebuiltA.classList.contains('vmd-cb--editing')) { orphanGone = true; break; }
+    }
+    add(`node-replacement retirement cleans the orphan mirror and keeps B's (got ${overlays().length})`, orphanGone);
+    pyEdit.setAttribute('style', 'display: none;');
+    await sleep(300);
+    add(`cleanup after the replacement scenario (got ${overlays().length})`, overlays().length === 0);
+  }
 
   // ── rebuild survival (theme change destroys + recreates vditor) ──
   window.dispatchEvent(new window.MessageEvent('message', {
@@ -437,11 +801,52 @@ async function main() {
   checks.push({ name: 'collapsed block drops the pre bottom padding (bar IS the strip)', pass: /pre\.vmd-cb--collapsed\{[^}]*padding-bottom:0!important/.test(mainCss) });
   checks.push({ name: 'collapsed bar rounds all corners', pass: /pre\.vmd-cb--collapsed>\.vmd-cb-header\{[^}]*border-radius:12px/.test(mainCss) });
   checks.push({ name: 'chevron rotates to point at the collapsed state', pass: /\.vmd-cb--collapsed[^{]*\.vmd-cb-chevron[^{]*\{[^}]*rotate\(-90deg\)/.test(mainCss) });
-  // Editing a fenced block must show ONE block, not two: vditor's wysiwyg
-  // natively keeps the plain editing pre AND the highlighted preview on
-  // screen at the same time; our override hides the preview while the
-  // editing pre is flipped visible (its inline style stops saying "none").
-  checks.push({ name: 'editing pre visible hides the sibling preview (no duplicated block)', pass: /vditor-wysiwyg__pre:not\(\[style\*=(none|"none")\]\)\+pre\.vditor-wysiwyg__preview\{display:none\}/.test(mainCss) });
+  // Editing a fenced block must stay IN PLACE: same block shell, toolbar
+  // kept. The preview SHELL (header bar) stays on top with everything but
+  // the header hidden; the editing pre sits seamlessly below — one
+  // continuous rounded block, height matching the preview state.
+  checks.push({ name: 'editing keeps the preview shell on top (order swap)', pass: /\.vmd-cb--editing>pre\.vditor-wysiwyg__preview\{order:-1/.test(mainCss) });
+  checks.push({ name: 'editing kills the flex-hostile block marker pseudo-element', pass: /\.vmd-cb--editing:{1,2}before\{content:none!important/.test(mainCss) });
+  checks.push({ name: 'editing hides the shell content except the header (incl. ZWSP placeholder)', pass: /\.vmd-cb--editing>pre\.vditor-wysiwyg__preview>:not\(\.vmd-cb-header\)\{display:none!important/.test(mainCss) });
+  checks.push({ name: 'editing pre completes the block shell (no margins, lower rounding, zero top padding)', pass: /\.vmd-cb--editing>pre\.vditor-wysiwyg__pre\{[^}]*margin:0!important/.test(mainCss) && /padding:0 1em \.75em!important/.test(mainCss) && /border-radius:0 0 12px 12px!important/.test(mainCss) });
+  // vditor's pre is content-box: width:100% plus the editing padding would
+  // spill ~2em past the shell's right edge. The padding must count INSIDE.
+  checks.push({ name: 'editing pre keeps its surface inside the shell (border-box)', pass: /\.vmd-cb--editing>pre\.vditor-wysiwyg__pre\{[^}]*box-sizing:border-box/.test(mainCss) });
+  // Edit-mode highlight mirror: the editing text turns transparent (caret
+  // stays visible) while an aligned, non-interactive colored layer behind
+  // it carries the syntax colors — the block stays highlighted WHILE
+  // editing, with the editable DOM left as plain text.
+  checks.push({ name: 'editing text turns transparent for the highlight mirror', pass: /\.vditor-wysiwyg \.vmd-cb--editing>pre\.vditor-wysiwyg__pre(?:,|>|\{)[^{}]*\{[^}]*color:transparent!important/.test(mainCss) });
+  checks.push({ name: 'editing caret stays visible (caret-color)', pass: /\.vditor-wysiwyg \.vmd-cb--editing>pre\.vditor-wysiwyg__pre(?:,|>|\{)[^{}]*\{[^}]*caret-color/.test(mainCss) });
+  checks.push({ name: 'highlight mirror is non-interactive (pointer-events none)', pass: /\.vmd-cb-edit-hl\{[^}]*pointer-events:none/.test(mainCss) });
+  // Diagram blocks (mermaid & co): the rendered figure is NOT a click-to-edit
+  // surface — the only edit entry is a </> pill that appears on hover, and
+  // the header bar shows only while EDITING (the preview stays a clean
+  // figure). The pill must be inert while hidden, or it would intercept
+  // figure-text selection clicks.
+  checks.push({ name: 'diagram edit pill is hidden until hover', pass: /\.vmd-cb-edit-btn\{[^}]*opacity:0/.test(mainCss) && /\.vditor-wysiwyg__block:hover [^{]*\.vmd-cb-edit-btn[^{]*\{[^}]*opacity:1/.test(mainCss) });
+  checks.push({ name: 'diagram edit pill is inert while hidden (pointer-events none)', pass: /\.vmd-cb-edit-btn\{[^}]*pointer-events:none/.test(mainCss) });
+  checks.push({ name: 'diagram preview hides the header (clean figure)', pass: /vmd-cb--diagram>\.vmd-cb-header\{display:none/.test(mainCss) });
+  checks.push({ name: 'diagram editing state shows the header', pass: /\.vmd-cb--editing>pre\.vditor-wysiwyg__preview\.vmd-cb--diagram>\.vmd-cb-header\{[^}]*display:flex!important/.test(mainCss) });
+  // Word wrap must also govern the code being EDITED (the editing pre is a
+  // sibling of the preview pre, so the class rides the block container).
+  checks.push({ name: 'wrap also applies while editing (class rides the block)', pass: /\.vditor-wysiwyg__block\.vmd-cb--wrap pre code\{[^}]*white-space:pre-wrap!important/.test(mainCss) });
+  // vditor ships `.vditor-wysiwyg__preview { cursor: pointer }` — the whole
+  // preview (INCLUDING the code text) shows the hand. Text areas show the
+  // text caret; the header bar keeps its own pointer affordance.
+  checks.push({ name: 'preview text area shows the text cursor (not the hand)', pass: /pre\.vditor-wysiwyg__preview\{[^}]*cursor:text/.test(mainCss) });
+  // Font-metric continuity across the edit-mode toggle: vditor pins its own
+  // "Consolas, ..." stack on the plain editing pre while the preview code
+  // renders with the VS Code editor font — on machines where the first
+  // family resolves, the text jumps ~1.4px on every toggle and the mirror
+  // (which copies the editing font) is offset from the caret. The editing
+  // pre must carry the SAME editor font stack.
+  checks.push({ name: 'editing pre uses the same editor font stack as the preview code', pass: /\.vditor-wysiwyg pre\.vditor-wysiwyg__pre(?:,|>|\s)code?[^{]*\{[^}]*font-family:var\(--vscode-editor-font-family[^}]*!important/.test(mainCss) || /pre\.vditor-wysiwyg__pre[^{]*\{[^}]*font-family:var\(--vscode-editor-font-family[^}]*!important/.test(mainCss) });
+  // Preview code must carry the SAME editor variable: vditor's hardcoded
+  // "mononoki, ..." stack is a direct rule that beats the inherited
+  // .vditor-reset font, so on machines where mononoki resolves the two
+  // modes render different faces and the text jumps on every toggle.
+  checks.push({ name: 'preview pre code overrides vditor\'s hardcoded font with the editor variable', pass: /\.vditor-reset pre code\{[^}]*font-family:var\(--vscode-editor-font-family[^}]*!important/.test(mainCss) });
 
   let failures = 0;
   console.log('[code-block] checks:');

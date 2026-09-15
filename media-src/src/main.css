@@ -324,25 +324,106 @@ pre.vmd-cb--collapsed .vmd-cb-chevron svg {
   color: var(--vscode-errorForeground, #f48771);
 }
 /* vditor's wysiwyg natively keeps BOTH the plain editing <pre> and the
- * highlighted preview on screen once a fenced block enters edit mode
- * (clicking the preview flips the sibling editing pre to display:block and
- * leaves the preview visible) — the user asked for ONE editing block
- * instead. When vditor flips the editing pre visible (its inline style no
- * longer says "none"), hide the sibling preview; when editing ends vditor
- * restores display:none on the editing pre and the preview returns.
- * The margin-bottom override undoes vditor's `-1em` on the editing pre,
- * which only made sense to tuck it against the (now hidden) preview —
- * without it the editing block sits ~2px from the following block.
- * High specificity beats vditor's own rules regardless of injection order. */
-.vditor-wysiwyg__block > pre.vditor-wysiwyg__pre:not([style*="none"]) + pre.vditor-wysiwyg__preview {
-  display: none;
+ * highlighted preview on screen once a fenced block enters edit mode —
+ * the user asked to edit IN PLACE instead: same block, toolbar kept, code
+ * area becomes the (highlighted) editing surface. Layout while editing:
+ * the block becomes a column with the preview SHELL on top (header bar,
+ * upper rounding, its <code> hidden) and the editing pre seamlessly below
+ * (lower rounding) — together they read as the SAME rounded block. When
+ * editing ends vditor restores display:none on the editing pre and the
+ * preview returns unchanged. */
+.vmd-cb--editing {
+  display: flex;
+  flex-direction: column;
 }
-.vditor-wysiwyg__block > pre.vditor-wysiwyg__pre:not([style*="none"]) {
-  margin-bottom: 1em;
+/* vditor's floating block marker (::before "</>") is laid out with float,
+ * which a flex container IGNORES — it would become a flex item and occupy
+ * a full 20px line between the shell and the editing surface. */
+.vmd-cb--editing::before {
+  content: none !important;
+}
+.vmd-cb--editing > pre.vditor-wysiwyg__preview {
+  order: -1;
+  margin: 0 !important;
+  border-radius: 12px 12px 0 0 !important;
+  padding-bottom: 0 !important;
+}
+/* hide EVERYTHING in the shell except our header — vditor leaves a ZWSP
+ * placeholder span next to the hidden <code> that still occupies a line */
+.vmd-cb--editing > pre.vditor-wysiwyg__preview > :not(.vmd-cb-header) {
+  display: none !important;
+}
+.vmd-cb--editing > pre.vditor-wysiwyg__pre {
+  width: 100%;
+  /* vditor's pre is content-box: width:100% + the padding below would push
+   * the editing surface ~2em past the shell's right edge (user report:
+   * "editing block overflows on the right"). Count the padding INSIDE. */
+  box-sizing: border-box;
+  margin: 0 !important;
+  /* top gap comes from the header's own padding-bottom, so the editing
+   * surface starts exactly where the preview <code> used to (block height
+   * then matches the preview state — no reflow when entering edit mode) */
+  padding: 0 1em 0.75em !important;
+  border-radius: 0 0 12px 12px !important;
 }
 
-/* Per-block soft wrap, toggled by the header's wrap button. */
-pre.vmd-cb--wrap code {
+/* vditor ships `.vditor-wysiwyg__preview { cursor: pointer }` — it treats the
+ * whole preview (INCLUDING the code text) as a click-to-edit button, so the
+ * hand shows over the text too. Text areas show the text caret; entering edit
+ * mode stays discoverable through the header bar's own pointer affordance. */
+pre.vditor-wysiwyg__preview {
+  cursor: text;
+}
+
+/* ── Edit-mode syntax highlighting mirror (see code-block.ts) ───────────
+ * While a fenced block is being edited, its plain text turns transparent
+ * (caret and selection remain visible) and an aligned, non-interactive
+ * hljs-colored layer sits BEHIND it — the block keeps its syntax colors
+ * while editing, and the editable DOM stays plain text. The mirror's
+ * typography is copied from the editing <code> at mount time via inline
+ * style; the rules below only position it and make it inert. */
+.vmd-cb--editing {
+  /* anchor for the absolute-positioned mirror */
+  position: relative;
+}
+/* .vditor-wysiwyg prefix lifts specificity above the theme bridge's own
+ * !important inline-code rule (`.vditor-reset code:not(.hljs)…`), and
+ * !important beats vditor's higher-specificity color on the editing code —
+ * plain `color: transparent` alone never wins either way. The background
+ * pins the editing strip to the BLOCK's own textCodeBlock surface: vditor
+ * paints its panel tint there (~3.5% darker band), while plain transparent
+ * would drop the editing text out of the block's rounded surface entirely
+ * (user report: "editing is no longer inside the block style"). */
+.vditor-wysiwyg .vmd-cb--editing > pre.vditor-wysiwyg__pre,
+.vditor-wysiwyg .vmd-cb--editing > pre.vditor-wysiwyg__pre > code {
+  position: relative;
+  z-index: 1;
+  color: transparent !important;
+  background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.15)) !important;
+  caret-color: var(--vscode-editor-foreground, #d4d4d4);
+}
+/* The mirror lives at BODY level (position: fixed, pinned to the editing
+ * code's box by JS): it must not sit inside the editing container, where
+ * vditor's input handling treats it as a foreign node and flips the block
+ * out of edit mode on the first keystroke. pointer-events:none keeps it
+ * inert; its typography is copied from the editing <code> inline. */
+.vmd-cb-edit-hl {
+  position: fixed;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  text-align: left;
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-editor-foreground, #d4d4d4);
+  box-sizing: border-box;
+}
+
+/* Per-block soft wrap, toggled by the header's wrap button. In wysiwyg the
+ * class rides the BLOCK container: the editing pre (where wrap matters —
+ * long source lines) is a SIBLING of the preview pre, so a per-pre class
+ * cannot reach it; the block-scoped rule covers both pres at once. */
+pre.vmd-cb--wrap code,
+.vditor-wysiwyg__block.vmd-cb--wrap pre code {
   white-space: pre-wrap !important;
   overflow-wrap: break-word;
 }
@@ -361,4 +442,59 @@ pre.vmd-cb--collapsed > .vmd-cb-header {
 }
 pre.vmd-cb--collapsed {
   padding-bottom: 0 !important;
+}
+
+/* ── Diagram blocks (mermaid, echarts, …) — viewing surface, not an edit
+ * one (user spec): the rendered figure stays CLEAN in preview (no header),
+ * raw clicks on it never enter edit mode (guarded in code-block.ts — they
+ * used to misfire while selecting the rendered text to copy it), and the
+ * ONLY entry is a </> pill that fades in on hover. */
+pre.vditor-wysiwyg__preview.vmd-cb--diagram {
+  /* anchor for the absolutely-positioned pill */
+  position: relative;
+}
+pre.vditor-wysiwyg__preview.vmd-cb--diagram > .vmd-cb-header {
+  display: none;
+}
+/* Editing a diagram behaves like any other block: the shell shows the
+ * header toolbar above the editing surface. */
+.vmd-cb--editing > pre.vditor-wysiwyg__preview.vmd-cb--diagram > .vmd-cb-header {
+  display: flex !important;
+}
+.vmd-cb-edit-btn {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.4));
+  border-radius: 6px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  color: var(--vscode-editor-foreground, #d4d4d4);
+  cursor: pointer;
+  /* hidden until the block is hovered — and INERT while hidden, so the pill
+   * never intercepts a figure-text selection click */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.vmd-cb-edit-btn svg {
+  width: 15px;
+  height: 10px;
+}
+.vditor-wysiwyg__block:hover .vmd-cb-edit-btn,
+.vmd-cb-edit-btn:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.vmd-cb-edit-btn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+}
+.vmd-cb-edit-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.25));
 }
