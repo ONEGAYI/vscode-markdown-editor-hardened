@@ -13,6 +13,31 @@ dropped.
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-09-15
+
+代码块工具栏升级为整条折叠开关，并修复编辑代码块时"一分为二"
+（素码编辑区与高亮预览并存）的问题。基点对账：上游基点仍为
+upstream main@033c624，无上游变更。
+
+### 新功能
+
+- **工具栏整条可折叠代码块**（PR #4）：整个工具栏条是全宽"药丸"
+  ——悬停轻微变色（约 7.5% 加深）提示可点、高度即折叠态窄条高
+  度；点击任意处（右侧换行/复制按钮除外）折叠/展开代码区，语言
+  名右侧 chevron 随状态旋转；键盘 Enter/Space 同样激活。
+
+### 修复
+
+- **编辑代码块"一分为二"**（PR #4）：vditor 的 wysiwyg 模式原生
+  在编辑时同时保留素码编辑区与下方高亮预览（经无增强对照页实测
+  确认为原生行为）。现编辑时只显示单个素码编辑块，失焦后预览自
+  动恢复并重新高亮；编辑块与后续内容的间距同步补回正常量级。
+- **折叠交互与 vditor 编辑态串扰**（PR #4）：此前点击工具栏或按
+  键盘会同时把代码块切进 vditor 的素码编辑模式（折叠时下方冒出
+  素码区）；空格键在所见即所得/即时渲染模式下会被 vditor 当作编
+  辑器输入拦截导致折叠开关收不到。现两类事件均在捕获阶段最先拦
+  截并隔离，折叠归折叠、编辑归编辑。
+
 ## [0.2.2] — 2026-09-15
 
 修复长代码块内部出现的多余竖直滚动条，并按参考设计图重做代码块
@@ -408,7 +433,8 @@ The currently-published Marketplace version of
 Still vulnerable to all seven audit findings (H1, H2, H3, H4, H5, H6, H9).
 
 <!-- 变更链接 -->
-[Unreleased]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.1.21-hardened.2...v0.2.0
