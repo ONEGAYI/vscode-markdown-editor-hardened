@@ -13,6 +13,25 @@ dropped.
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-09-15
+
+修复长代码块内部出现的多余竖直滚动条，并按参考设计图重做代码块
+工具栏视觉。基点对账：上游基点仍为 upstream main@033c624，无上游
+变更。
+
+### 修复
+
+- **长代码块内部竖直滚动条**（PR #3）：vditor 的 codeRender 按窗口
+  高度给每个代码块的 `<code>` 设置 inline
+  `max-height: window.outerHeight - 40px`，超过该高度的代码块被封
+  顶，在块内生成第二个竖直滚动条，页面滚动与块内滚动并存。现以
+  `max-height: none !important` 覆盖，代码块恢复自然高度，仅保留页
+  面级滚动；导出/复制 HTML 走 Lute 从 markdown 源再生成，不受影响。
+- **工具栏视觉重做为纯间距分区**（PR #3）：0.2.1 的微降明度层与下
+  缘投影方案废弃。工具栏与代码区完全同底色、无边框无阴影，仅以间
+  距分区——块顶→工具栏约 24px、工具栏墨迹底→代码首行墨迹顶 29px
+  （像素级对齐参考图）；代码块外边框移除、圆角 12px。
+
 ## [0.2.1] — 2026-09-15
 
 修复浅色主题下长代码块滚动时工具栏与代码"都看不清"的问题：工具栏
@@ -389,7 +408,8 @@ The currently-published Marketplace version of
 Still vulnerable to all seven audit findings (H1, H2, H3, H4, H5, H6, H9).
 
 <!-- 变更链接 -->
-[Unreleased]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.1.21-hardened.2...v0.2.0
 [0.1.21-hardened.2]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.1.21-hardened.1...v0.1.21-hardened.2
