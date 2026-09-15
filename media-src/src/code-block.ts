@@ -13,9 +13,13 @@
  * - The wrap button toggles soft-wrap for THAT block only (default off, not
  *   persisted across renders/rebuilds). The copy button writes the code text
  *   to the clipboard via navigator.clipboard.
- * - Diagram languages handled by vditor's own renderers (mermaid, echarts, …)
- *   are skipped — they have their own tooling and their <code> may be
- *   replaced by the rendered figure.
+ * - Diagram languages (mermaid, echarts, …) render into a
+ *   <div class="language-X"> — vditor turns the whole figure into a
+ *   click-to-edit surface, so selecting rendered text to copy it misfires
+ *   into edit mode. Their preview stays a CLEAN figure instead: raw clicks
+ *   on the figure are swallowed and the only edit entry is a `</>` pill
+ *   that appears on hover; the header bar shows up once editing (same
+ *   toolbar as regular blocks).
  * - Decorations live only in the editor DOM. getValue()/getHTML() go through
  *   Lute, so exported/copied markdown and HTML stay pristine.
  *
@@ -25,7 +29,8 @@
 import { t } from './lang'
 
 // vditor renders these through dedicated diagram pipelines (VD codeRender's
-// own skip list) — no header bar for them.
+// own skip list) — the preview side carries a <div class="language-X"> and
+// raw clicks on the rendered figure must not enter edit mode.
 const DIAGRAM_LANGS = new Set([
   'mermaid', 'flowchart', 'echarts', 'mindmap', 'markmap',
   'plantuml', 'abc', 'graphviz', 'math', 'smiles',
@@ -154,14 +159,44 @@ export function buildHeader(lang: string): HTMLElement {
   return header
 }
 
+/** The hover `</>` pill on a diagram block — its ONLY path into edit mode
+ *  (see decorate). Clicks on it are deliberately NOT intercepted: the pill
+ *  lives inside the preview <pre>, so vditor's own wysiwyg click handler
+ *  picks it up and runs its regular showCode() activation. */
+function buildEditButton(): HTMLElement {
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.className = 'vmd-cb-edit-btn'
+  const label = t('editDiagramSource')
+  btn.title = label
+  btn.setAttribute('aria-label', label)
+  btn.innerHTML = CODE_ICON_SVG
+  return btn
+}
+
 /** Insert a header bar into a preview <pre> if it should have one.
  *  Returns true when a header was added. Idempotent. */
 export function decorate(pre: HTMLPreElement): boolean {
   if (pre.querySelector(':scope > .vmd-cb-header')) return false
+  // Regular blocks carry the fence source as <code class="language-X">;
+  // diagram languages render into a sibling <div class="language-X"> (Lute
+  // emits the div itself — the check works before mermaid/echarts loads).
   const code = pre.querySelector(':scope > code')
+  const langEl = code || pre.querySelector(':scope > [class^="language-"]')
+  if (!langEl) return false
+  const lang = langOf(langEl)
+  if (DIAGRAM_LANGS.has(lang.toLowerCase())) {
+    // Diagram blocks: wysiwyg only — the click guard + hover pill below are
+    // wired to wysiwyg's showCode path; ir/sv keep vditor's stock behavior.
+    if (!pre.classList.contains('vditor-wysiwyg__preview')) return false
+    pre.classList.add('vmd-cb--diagram')
+    // The header is the EDIT-MODE toolbar (hidden while previewing via CSS)
+    // and the pill is the edit entry (shown on hover via CSS).
+    pre.insertBefore(buildEditButton(), pre.firstChild)
+    pre.insertBefore(buildHeader(lang), pre.firstChild)
+    return true
+  }
   if (!code) return false
-  const lang = langOf(code)
-  if (DIAGRAM_LANGS.has(lang.toLowerCase())) return false
   const header = buildHeader(lang)
   pre.insertBefore(header, pre.firstChild)
   // In-place overwrite recovery: the <pre> survives with its collapsed class
@@ -510,6 +545,39 @@ export function installHeaderKeyActivation() {
   }, true)
 }
 
+/** Focus the just-revealed editing pre AT THE CLICK POINT (VS Code semantics:
+ *  click a line, the caret lands on that line). Falls back to the code start
+ *  when caretRangeFromPoint is unavailable (jsdom) or misses the block. */
+function focusEditAt(editPre: HTMLPreElement, x: number, y: number) {
+  const code = editPre.querySelector(':scope > code') || editPre
+  if (!code.firstChild) code.appendChild(document.createTextNode(''))
+  const doc = document as Document & {
+    caretRangeFromPoint?: (x: number, y: number) => Range | null
+  }
+  let r: Range | null = null
+  if (typeof doc.caretRangeFromPoint === 'function') {
+    try {
+      r = doc.caretRangeFromPoint(x, y)
+    } catch (_) {
+      r = null
+    }
+    // The point was taken on the PREVIEW layer; after the flip the same
+    // coordinates must land inside THIS block's editing code, or the layout
+    // shift moved the target — fall back rather than focus a foreign node.
+    if (r && !code.contains(r.startContainer)) r = null
+  }
+  if (!r) {
+    r = document.createRange()
+    r.selectNodeContents(code)
+    r.collapse(true)
+  }
+  const sel = window.getSelection()
+  if (sel) {
+    sel.removeAllRanges()
+    sel.addRange(r)
+  }
+}
+
 /** Install the MutationObserver + delegated click handler and sweep existing
  *  blocks. Idempotent: safe to call from every vditor after() rebuild. */
 export function installCodeBlockEnhancer() {
@@ -527,6 +595,11 @@ export function installCodeBlockEnhancer() {
     document.addEventListener('click', (e) => {
       const target = e.target as HTMLElement | null
 
+      // Diagram edit pill: deliberately NOT consumed — the pill lives inside
+      // the preview <pre>, so letting the click through makes vditor's own
+      // wysiwyg handler run its regular showCode() activation (VD:15353).
+      if (target?.closest?.('.vmd-cb-edit-btn') instanceof HTMLElement) return
+
       // Action buttons keep their own behavior and must NOT fold the block.
       const btn = target?.closest?.('.vmd-cb-btn')
       if (btn instanceof HTMLElement) {
@@ -535,7 +608,12 @@ export function installCodeBlockEnhancer() {
         if (!pre) return
 
         if (btn.classList.contains('vmd-cb-wrap')) {
-          const on = pre.classList.toggle('vmd-cb--wrap')
+          // Ride the BLOCK container in wysiwyg: the editing pre (where the
+          // wrap matters most — long source lines) is a SIBLING of the
+          // preview pre, so a class on the preview pre alone cannot reach
+          // it. ir/sv have no block wrapper and keep the class on the pre.
+          const host = btn.closest('.vditor-wysiwyg__block') || pre
+          const on = host.classList.toggle('vmd-cb--wrap')
           btn.classList.toggle('vmd-cb-btn--on', on)
           btn.title = t(on ? 'disableWrap' : 'enableWrap')
           btn.setAttribute('aria-label', btn.title)
@@ -543,7 +621,14 @@ export function installCodeBlockEnhancer() {
         }
 
         if (btn.classList.contains('vmd-cb-copy')) {
-          const code = pre.querySelector(':scope > code')
+          let code = pre.querySelector(':scope > code')
+          if (pre.classList.contains('vmd-cb--diagram')) {
+            // The preview side holds the RENDERED figure (SVG text once
+            // mermaid runs) — the fence source lives in the editing pre.
+            code =
+              pre.parentElement?.querySelector('pre.vditor-wysiwyg__pre > code') ||
+              code
+          }
           const text = code ? codeTextOf(code) : ''
           const clip = (navigator as any).clipboard
           if (clip && typeof clip.writeText === 'function') {
@@ -566,6 +651,46 @@ export function installCodeBlockEnhancer() {
         const pre = header.closest('pre')
         if (!pre) return
         toggleCollapse(pre, header)
+        return
+      }
+
+      // Diagram rendered figure (anything left inside its preview <pre>):
+      // swallow the click. vditor turns every click inside a preview <pre>
+      // into edit mode, so selecting the rendered text to copy it (click +
+      // drag) misfired into editing — the pill above is the ONLY entry.
+      if (target?.closest?.('pre.vmd-cb--diagram') instanceof HTMLElement) {
+        e.stopPropagation()
+        return
+      }
+
+      // Regular code block: entering edit mode is OUR takeover. vditor's
+      // showCode() pins the caret to the CODE START, so a click mid-block
+      // visibly flashes from the clicked spot to the first character. Here
+      // the editing pre is flipped and focused at the click point in one
+      // synchronous step, and vditor's own click handler is cut off (its
+      // activation duties — display flip, empty-text guard, caret focus —
+      // are all reproduced in focusEditAt). The class check keeps the
+      // takeover to real fenced-code blocks: html-block's source pre has no
+      // vditor-wysiwyg__pre class and keeps vditor's stock click path.
+      const preview = target?.closest?.('pre.vditor-wysiwyg__preview')
+      if (preview instanceof HTMLPreElement) {
+        const editPre = preview.previousElementSibling
+        if (
+          editPre instanceof HTMLPreElement &&
+          editPre.classList.contains('vditor-wysiwyg__pre')
+        ) {
+          e.stopPropagation()
+          editPre.style.display = 'block'
+          // Apply the editing-shell class SYNCHRONOUSLY, before the caret is
+          // resolved: until the preview <code> is hidden the block lays out
+          // with BOTH surfaces stacked, and caretRangeFromPoint on that
+          // transient layout lands ~2 lines below the click (the header's
+          // height no longer precedes the point). The class is idempotent —
+          // refreshEditOverlays re-applies it later from DOM truth.
+          const block = editPre.parentElement
+          if (block instanceof HTMLElement) block.classList.add('vmd-cb--editing')
+          focusEditAt(editPre, e.clientX, e.clientY)
+        }
       }
     }, true)
 

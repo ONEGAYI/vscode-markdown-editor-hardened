@@ -12,6 +12,7 @@ const Langs = {
     copyFailed: 'Copy failed',
     collapseCode: 'Collapse code block',
     expandCode: 'Expand code block',
+    editDiagramSource: 'Edit diagram source',
   },
   ja_JP: {
     save: '保存する',
@@ -32,6 +33,7 @@ const Langs = {
     copyFailed: '复制失败',
     collapseCode: '折叠代码块',
     expandCode: '展开代码块',
+    editDiagramSource: '编辑图表源码',
   },
 }
 

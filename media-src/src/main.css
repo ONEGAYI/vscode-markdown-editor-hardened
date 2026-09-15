@@ -355,12 +355,24 @@ pre.vmd-cb--collapsed .vmd-cb-chevron svg {
 }
 .vmd-cb--editing > pre.vditor-wysiwyg__pre {
   width: 100%;
+  /* vditor's pre is content-box: width:100% + the padding below would push
+   * the editing surface ~2em past the shell's right edge (user report:
+   * "editing block overflows on the right"). Count the padding INSIDE. */
+  box-sizing: border-box;
   margin: 0 !important;
   /* top gap comes from the header's own padding-bottom, so the editing
    * surface starts exactly where the preview <code> used to (block height
    * then matches the preview state — no reflow when entering edit mode) */
   padding: 0 1em 0.75em !important;
   border-radius: 0 0 12px 12px !important;
+}
+
+/* vditor ships `.vditor-wysiwyg__preview { cursor: pointer }` — it treats the
+ * whole preview (INCLUDING the code text) as a click-to-edit button, so the
+ * hand shows over the text too. Text areas show the text caret; entering edit
+ * mode stays discoverable through the header bar's own pointer affordance. */
+pre.vditor-wysiwyg__preview {
+  cursor: text;
 }
 
 /* ── Edit-mode syntax highlighting mirror (see code-block.ts) ───────────
@@ -406,8 +418,12 @@ pre.vmd-cb--collapsed .vmd-cb-chevron svg {
   box-sizing: border-box;
 }
 
-/* Per-block soft wrap, toggled by the header's wrap button. */
-pre.vmd-cb--wrap code {
+/* Per-block soft wrap, toggled by the header's wrap button. In wysiwyg the
+ * class rides the BLOCK container: the editing pre (where wrap matters —
+ * long source lines) is a SIBLING of the preview pre, so a per-pre class
+ * cannot reach it; the block-scoped rule covers both pres at once. */
+pre.vmd-cb--wrap code,
+.vditor-wysiwyg__block.vmd-cb--wrap pre code {
   white-space: pre-wrap !important;
   overflow-wrap: break-word;
 }
@@ -426,4 +442,59 @@ pre.vmd-cb--collapsed > .vmd-cb-header {
 }
 pre.vmd-cb--collapsed {
   padding-bottom: 0 !important;
+}
+
+/* ── Diagram blocks (mermaid, echarts, …) — viewing surface, not an edit
+ * one (user spec): the rendered figure stays CLEAN in preview (no header),
+ * raw clicks on it never enter edit mode (guarded in code-block.ts — they
+ * used to misfire while selecting the rendered text to copy it), and the
+ * ONLY entry is a </> pill that fades in on hover. */
+pre.vditor-wysiwyg__preview.vmd-cb--diagram {
+  /* anchor for the absolutely-positioned pill */
+  position: relative;
+}
+pre.vditor-wysiwyg__preview.vmd-cb--diagram > .vmd-cb-header {
+  display: none;
+}
+/* Editing a diagram behaves like any other block: the shell shows the
+ * header toolbar above the editing surface. */
+.vmd-cb--editing > pre.vditor-wysiwyg__preview.vmd-cb--diagram > .vmd-cb-header {
+  display: flex !important;
+}
+.vmd-cb-edit-btn {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.4));
+  border-radius: 6px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  color: var(--vscode-editor-foreground, #d4d4d4);
+  cursor: pointer;
+  /* hidden until the block is hovered — and INERT while hidden, so the pill
+   * never intercepts a figure-text selection click */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.vmd-cb-edit-btn svg {
+  width: 15px;
+  height: 10px;
+}
+.vditor-wysiwyg__block:hover .vmd-cb-edit-btn,
+.vmd-cb-edit-btn:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.vmd-cb-edit-btn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+}
+.vmd-cb-edit-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.25));
 }
