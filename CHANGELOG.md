@@ -11,7 +11,16 @@ Earlier releases used `upstream + -hardened.<N>` tags; that suffix collides
 with semver pre-release semantics (the VS Marketplace rejects it) and was
 dropped.
 
-## [Unreleased]
+## [0.2.0] — 2026-09-15
+
+本版聚焦代码块体验：每个代码块新增常驻工具栏（语言名 + 按块自动换行
++ 复制）、修复 ```jsonc 等 VS Code 风格语言标识完全无语法高亮的问
+题、去除 vditor 原生棋盘格背景纹理；同时兜底修复 vditor 3.11.2 悬
+浮工具条必然抛错的上游缺陷。首个独立版本号发布（此前为
+`0.1.21-hardened.N` 序列）。
+
+基点对账：上游基点仍为 upstream main@033c624，本版未引入上游新提
+交，全部变更来自本仓库。
 
 ### 新功能
 
@@ -363,6 +372,7 @@ The currently-published Marketplace version of
 Still vulnerable to all seven audit findings (H1, H2, H3, H4, H5, H6, H9).
 
 <!-- 变更链接 -->
-[Unreleased]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.1.21-hardened.2...HEAD
+[Unreleased]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.1.21-hardened.2...v0.2.0
 [0.1.21-hardened.2]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/compare/v0.1.21-hardened.1...v0.1.21-hardened.2
 [0.1.21-hardened.1]: https://github.com/ONEGAYI/vscode-markdown-editor-hardened/commits/v0.1.21-hardened.1
