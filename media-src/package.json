@@ -3,8 +3,8 @@
   "version": "0.0.0",
   "private": "true",
   "scripts": {
-    "start": "pnpm esbuild ./src/main.ts --bundle --watch --sourcemap --outfile=../media/dist/main.js",
-    "build": "node check-vditor-compat.js && rm -rf ../media/dist; pnpm esbuild ./src/main.ts --bundle --minify --sourcemap --outfile=../media/dist/main.js && node copy-vditor-assets.js",
+    "start": "esbuild ./src/main.ts --bundle --watch --sourcemap --outfile=../media/dist/main.js",
+    "build": "node check-vditor-compat.js && esbuild ./src/main.ts --bundle --minify --outfile=../media/dist/main.js --format=iife",
     "copy-vditor-assets": "node copy-vditor-assets.js",
     "check-vditor-compat": "node check-vditor-compat.js"
   },
@@ -16,7 +16,7 @@
   "dependencies": {
     "@babel/runtime-corejs3": "^7.13.17",
     "date-fns": "^2.21.1",
-    "esbuild": "^0.11.14",
+    "esbuild": "^0.28.2",
     "jquery": "^3.6.0",
     "jquery-confirm": "^3.3.4",
     "lodash": "^4.17.21",

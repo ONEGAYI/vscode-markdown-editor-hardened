@@ -5,15 +5,14 @@
 
 ## 构建与测试
 
-- 本机 pnpm 已损坏，`pnpm build` 不可用。在 `media-src/` 下用 esbuild
-  单条命令构建：
-  `npx esbuild@0.28.2 src/main.ts --bundle --minify --outfile=../media/dist/main.js --format=iife`
-  一条命令同时产出 js 与 css；不要对 css 单独再跑 esbuild（会把 bundle
-  产出的完整 css 覆盖成未展开 @import 的坏产物），构建后删除遗留的
-  `../media/dist/main.css.map`。
-- 完整 `pnpm build` 还含 `node check-vditor-compat.js`（vditor 版本锁
-  检查）与 `node copy-vditor-assets.js`（资产已在 git 中，通常无需重跑）；
-  单命令构建后至少补跑 compat 检查。
+- 在 `media-src/` 下 `pnpm build`（compat 检查 + esbuild 0.28.2 打包，
+  一条命令同时产出 js 与 css）。历史坑（已修复）：旧 build 脚本用
+  Unix 分号与 `rm -rf`，Windows 下 `--bundle` 被并进 rm 参数而失败，
+  曾被误诊为"pnpm 损坏"；且本地 esbuild 0.11 安装残缺。二者均已修。
+- `copy-vditor-assets` 是**独立**脚本，仅升级 vditor 版本时手动跑：
+  它会用 node_modules 的原版覆盖 `media/vditor/dist`，**fork 修改过的
+  `js/lute/lute.min.js` 会被抹掉**，跑完必须 `git checkout -- media/vditor/dist`
+  或重打 Lute 补丁。日常构建不要执行它。
 - 集成测试：`node tests/integration/code-block.js`（jsdom 真实栈）；
   全量：`cd tests && node run-all.js`。
 
