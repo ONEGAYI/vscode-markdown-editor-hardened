@@ -18,6 +18,7 @@ import { t, lang } from './lang'
 import { toolbar } from './toolbar'
 import { fixTableIr } from './fix-table-ir'
 import { initSearch } from './search'
+import { installCodeBlockEnhancer, installHljsAliases } from './code-block'
 import './main.css'
 // C3.5/C3.6/C3.7: vscode-theme-bridge.css maps vditor's selectors to
 // VS Code's --vscode-* CSS variables so the editor aligns with the
@@ -298,6 +299,10 @@ function initVditor(msg) {
       fixTableIr()
       fixPanelHover()
       trackScrollPosition()
+      // Header bar (language + wrap + copy) for every rendered code block.
+      // Idempotent; the internal MutationObserver re-decorates blocks that
+      // vditor re-renders after this rebuild.
+      installCodeBlockEnhancer()
       restoreScrollPosition(msg.scrollTop)
       // Initialize search bar once (idempotent across vditor re-inits)
       if (!(window as any).__vmdSearch) {
@@ -429,5 +434,11 @@ document.addEventListener('keydown', (e) => {
 
 fixLinkClick()
 fixCut()
+
+// Must run at module load — BEFORE any vditor init can load highlight.js.
+// The accessor intercepts the hljs script's first `window.hljs = ...` and
+// registers our fence-language aliases on the instance before vditor's
+// highlight callbacks run (see code-block.ts for the full rationale).
+installHljsAliases()
 
 vscode.postMessage({ command: 'ready' })
