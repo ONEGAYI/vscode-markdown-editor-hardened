@@ -208,10 +208,30 @@ body.vmd-table-nowrap .vditor-toolbar [data-type="table-wrap"] {
   justify-content: space-between;
   gap: 8px;
   margin: -0.15em 0 0.55em;
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.15));
+  /* Fully opaque backdrop with the SAME visual tint as the code area: the
+   * theme's textCodeBlock token is often semi-transparent (it is composited
+   * over the editor background inside <pre>), so painting it alone left the
+   * header nearly the same color as the code beneath — with no border or
+   * shadow, the scrolling <code> area (vditor makes CODE the scroll
+   * container, not the <pre> this bar lives in) appeared to slice straight
+   * under the bar and both became unreadable. Compositing the same token
+   * over the (opaque) editor background reproduces the block's visual
+   * color while guaranteeing full opacity; a faint darkening layer on top
+   * separates the bar from the code area even before the shadow kicks in.
+   * position:sticky is intentionally NOT used: the bar sits in <pre> but
+   * scrolling happens inside <code>, so sticky could never engage anyway. */
+  background-color: var(--vscode-editor-background, #ffffff);
+  background-image: linear-gradient(rgba(0, 0, 0, 0.045), rgba(0, 0, 0, 0.045)),
+    linear-gradient(
+      var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.15)),
+      var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.15))
+    );
+  /* Drop shadow separates the bar from the code sliding under it (the
+   * scroll edge); the faint darkening layer above keeps the separation
+   * visible even where the shadow is weak (dark themes). padding-right
+   * keeps the copy button clear of the code area's scrollbar. */
+  box-shadow: 0 3px 8px -2px rgba(0, 0, 0, 0.45);
+  padding-right: 8px;
   user-select: none;
 }
 .vmd-cb-lang {
