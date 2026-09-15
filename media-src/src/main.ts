@@ -18,7 +18,7 @@ import { t, lang } from './lang'
 import { toolbar } from './toolbar'
 import { fixTableIr } from './fix-table-ir'
 import { initSearch } from './search'
-import { installCodeBlockEnhancer, installHljsAliases } from './code-block'
+import { installCodeBlockEnhancer, installHeaderKeyActivation, installHljsAliases } from './code-block'
 import './main.css'
 // C3.5/C3.6/C3.7: vscode-theme-bridge.css maps vditor's selectors to
 // VS Code's --vscode-* CSS variables so the editor aligns with the
@@ -447,5 +447,8 @@ fixCut()
 // registers our fence-language aliases on the instance before vditor's
 // highlight callbacks run (see code-block.ts for the full rationale).
 installHljsAliases()
+// Also at module load, before vditor init: the capture-phase keydown
+// delegation must precede vditor's own listeners (see code-block.ts).
+installHeaderKeyActivation()
 
 vscode.postMessage({ command: 'ready' })

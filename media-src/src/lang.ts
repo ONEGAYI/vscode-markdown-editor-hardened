@@ -10,6 +10,8 @@ const Langs = {
     copyCode: 'Copy code',
     copied: 'Copied',
     copyFailed: 'Copy failed',
+    collapseCode: 'Collapse code block',
+    expandCode: 'Expand code block',
   },
   ja_JP: {
     save: '保存する',
@@ -28,6 +30,8 @@ const Langs = {
     copyCode: '复制代码',
     copied: '已复制',
     copyFailed: '复制失败',
+    collapseCode: '折叠代码块',
+    expandCode: '展开代码块',
   },
 }
 

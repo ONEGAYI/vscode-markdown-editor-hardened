@@ -198,29 +198,42 @@ body.vmd-table-nowrap .vditor-toolbar [data-type="table-wrap"] {
 }
 
 /* ── Code block header bar (see src/code-block.ts) ────────────────────────
- * One bar per fenced block: `</>` icon + language name on the left,
- * wrap + copy buttons on the right. Deliberately has NO background of its
- * own: the bar sits inside <pre>, so the pre's flat textCodeBlock surface
- * is also the bar's background and the whole block reads as ONE continuous
- * color — zero color difference, no border, no shadow (per the design
- * reference). The bar is distinguished from the code area by SPACING only:
- * margin-top puts the bar's row ~24px below the block top (pre's 0.75em
- * padding-top ≈ 12px + 0.5em ≈ 8px + line-box ink offset ≈ 4px) and
- * margin-bottom (1.25em = 20px) leaves a ~29px raw ink gap before the
+ * One bar per fenced block: `</>` icon + language name (+ chevron) on the
+ * left, wrap + copy buttons on the right. Deliberately has NO resting
+ * background of its own: the bar sits inside <pre>, so the pre's flat
+ * textCodeBlock surface is also the bar's background and the whole block
+ * reads as ONE continuous color — zero color difference, no border, no
+ * shadow (per the design reference). The bar is distinguished from the code
+ * area by SPACING only: its padding-top (0.75em ≈ 12px + line-box ink
+ * offset ≈ 4px) puts the bar's ink ~24px below the block top, and
+ * padding-bottom (1.25em = 20px) leaves a ~29px raw ink gap before the
  * first code line, matching the reference mock's measured 29-30px
  * (visual-agent pixel re-check 2026-09).
- * position:sticky is intentionally NOT used: the bar sits in <pre> but
- * scrolling happens inside <code>, so sticky could never engage anyway. */
+ * The WHOLE bar is the toggle control (user spec): negative margins bleed
+ * it over the pre's own padding so the clickable/hover-tinted strip runs
+ * edge to edge and its height matches the collapsed strip (the bar plus
+ * its padding IS the whole block when collapsed); top corners follow the
+ * pre's 12px radius. Enter/Space work when the bar is focused (role=button
+ * + delegated keydown). */
 .vmd-cb-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin: 0.5em 0 1.25em;
-  /* padding-right keeps the copy button clear of the code area's
-   * scrollbar. */
-  padding-right: 8px;
+  /* bleed over the pre's padding: full-width strip, no idle background */
+  margin: -0.75em -1em 0;
+  padding: 0.75em 1em 1.25em;
+  border-radius: 12px 12px 0 0;
+  cursor: pointer;
   user-select: none;
+  transition: background-color 0.12s ease;
+}
+/* Light hover tint across the whole strip signals clickability. */
+.vmd-cb-header:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.25));
+}
+.vmd-cb-header:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
 }
 .vmd-cb-lang {
   display: inline-flex;
@@ -244,6 +257,20 @@ body.vmd-table-nowrap .vditor-toolbar [data-type="table-wrap"] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Collapse-state chevron inside the pill: points down while expanded,
+ * rotates to point right when the code area is hidden. */
+.vmd-cb-chevron {
+  display: inline-flex;
+  flex: none;
+}
+.vmd-cb-chevron svg {
+  width: 9px;
+  height: 9px;
+  transition: transform 0.15s ease;
+}
+pre.vmd-cb--collapsed .vmd-cb-chevron svg {
+  transform: rotate(-90deg);
 }
 .vmd-cb-actions {
   display: inline-flex;
@@ -296,8 +323,42 @@ body.vmd-table-nowrap .vditor-toolbar [data-type="table-wrap"] {
   opacity: 1;
   color: var(--vscode-errorForeground, #f48771);
 }
+/* vditor's wysiwyg natively keeps BOTH the plain editing <pre> and the
+ * highlighted preview on screen once a fenced block enters edit mode
+ * (clicking the preview flips the sibling editing pre to display:block and
+ * leaves the preview visible) — the user asked for ONE editing block
+ * instead. When vditor flips the editing pre visible (its inline style no
+ * longer says "none"), hide the sibling preview; when editing ends vditor
+ * restores display:none on the editing pre and the preview returns.
+ * The margin-bottom override undoes vditor's `-1em` on the editing pre,
+ * which only made sense to tuck it against the (now hidden) preview —
+ * without it the editing block sits ~2px from the following block.
+ * High specificity beats vditor's own rules regardless of injection order. */
+.vditor-wysiwyg__block > pre.vditor-wysiwyg__pre:not([style*="none"]) + pre.vditor-wysiwyg__preview {
+  display: none;
+}
+.vditor-wysiwyg__block > pre.vditor-wysiwyg__pre:not([style*="none"]) {
+  margin-bottom: 1em;
+}
+
 /* Per-block soft wrap, toggled by the header's wrap button. */
 pre.vmd-cb--wrap code {
   white-space: pre-wrap !important;
   overflow-wrap: break-word;
+}
+/* Collapsed block (header-bar click): the code area is hidden entirely and
+ * the bar IS the whole strip — round all corners and drop the pre's bottom
+ * padding so the collapsed block is one compact clickable bar. Copy still
+ * works: display:none does not change the code's textContent. !important:
+ * vditor's dynamically-injected stylesheet carries equally-specific rules
+ * (`pre > code { display: block }`, `pre { … }`) LATER in the cascade
+ * (same reason the theme bridge uses !important throughout). */
+pre.vmd-cb--collapsed > code {
+  display: none !important;
+}
+pre.vmd-cb--collapsed > .vmd-cb-header {
+  border-radius: 12px;
+}
+pre.vmd-cb--collapsed {
+  padding-bottom: 0 !important;
 }

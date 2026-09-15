@@ -94,23 +94,54 @@ const CHECK_ICON_SVG =
   'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<path d="M3 8.5 6.5 12 13 4"/></svg>'
 
+const CHEVRON_ICON_SVG =
+  '<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" ' +
+  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M2 3.5 5 6.5 8 3.5"/></svg>'
+
 /** Extract the fence language from a <code> element's `language-*` class. */
 export function langOf(code: Element): string {
   const m = /(?:^|\s)language-([^\s]+)/.exec(code.className)
   return m ? m[1] : ''
 }
 
+/** Sync a header bar's label + aria-expanded with the block's collapse
+ *  state. Shared by the click/keydown handlers and the in-place-overwrite
+ *  recovery path in decorate() (the <pre> keeps its class through an
+ *  innerHTML rewrite, but the fresh header starts expanded — it must be
+ *  re-synced). */
+function setCollapseState(header: HTMLElement, collapsed: boolean) {
+  const label = t(collapsed ? 'expandCode' : 'collapseCode')
+  header.title = label
+  header.setAttribute('aria-label', label)
+  header.setAttribute('aria-expanded', collapsed ? 'false' : 'true')
+}
+
 /** Build the header bar for one code block. Language name is set via
- *  textContent so user-provided info strings can never inject markup. */
+ *  textContent so user-provided info strings can never inject markup.
+ *  The WHOLE bar is the toggle control (full-width pill, per the user's
+ *  design): hover tints it and clicking anywhere on it — except the two
+ *  action buttons — collapses/expands the code area. The chevron points
+ *  down while expanded and rotates right when collapsed. The bar is a
+ *  div with role=button (a real <button> cannot nest the wrap/copy
+ *  buttons inside it); keyboard activation is handled by the delegated
+ *  keydown listener. */
 export function buildHeader(lang: string): HTMLElement {
   const header = document.createElement('div')
   header.className = 'vmd-cb-header'
+  header.setAttribute('role', 'button')
+  header.tabIndex = 0
   const wrapLabel = t('enableWrap')
   const copyLabel = t('copyCode')
+  const collapseLabel = t('collapseCode')
+  header.title = collapseLabel
+  header.setAttribute('aria-label', collapseLabel)
+  header.setAttribute('aria-expanded', 'true')
   header.innerHTML =
     '<span class="vmd-cb-lang">' +
     `<span class="vmd-cb-lang-icon">${CODE_ICON_SVG}</span>` +
     '<span class="vmd-cb-lang-name"></span>' +
+    `<span class="vmd-cb-chevron">${CHEVRON_ICON_SVG}</span>` +
     '</span>' +
     '<span class="vmd-cb-actions">' +
     `<button type="button" class="vmd-cb-btn vmd-cb-wrap" title="${wrapLabel}" aria-label="${wrapLabel}">${WRAP_ICON_SVG}</button>` +
@@ -131,7 +162,13 @@ export function decorate(pre: HTMLPreElement): boolean {
   if (!code) return false
   const lang = langOf(code)
   if (DIAGRAM_LANGS.has(lang.toLowerCase())) return false
-  pre.insertBefore(buildHeader(lang), pre.firstChild)
+  const header = buildHeader(lang)
+  pre.insertBefore(header, pre.firstChild)
+  // In-place overwrite recovery: the <pre> survives with its collapsed class
+  // while the header was just rebuilt — re-sync the fresh bar's state.
+  if (pre.classList.contains('vmd-cb--collapsed')) {
+    setCollapseState(header, true)
+  }
   return true
 }
 
@@ -224,6 +261,35 @@ export function installHljsAliases() {
   }
 }
 
+/** Toggle a block's collapse state and re-sync its header bar. */
+function toggleCollapse(pre: HTMLPreElement, header: HTMLElement) {
+  setCollapseState(header, pre.classList.toggle('vmd-cb--collapsed'))
+}
+
+/** Keyboard activation for the header bar (role=button): Enter/Space when
+ *  the bar ITSELF is focused. Registered at MODULE LOAD (before vditor
+ *  init) on the WINDOW CAPTURE phase — the earliest possible interception:
+ *  wysiwyg/ir preview blocks live INSIDE the contenteditable containers,
+ *  and vditor's own keydown handling treats Space as editor input (it can
+ *  flip the block into its plain-text editing mode and even detach the
+ *  preview pre). preventDefault + stopPropagation keep the keystroke ours;
+ *  buttons inside the bar are skipped — they natively activate and would
+ *  otherwise double-fire. */
+export function installHeaderKeyActivation() {
+  const w = window as any
+  if (w.__vmdCbKeyActivation) return
+  w.__vmdCbKeyActivation = true
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    const target = e.target as HTMLElement | null
+    if (!(target instanceof HTMLElement) || !target.classList.contains('vmd-cb-header')) return
+    e.preventDefault()
+    e.stopPropagation()
+    const pre = target.closest('pre')
+    if (pre) toggleCollapse(pre, target)
+  }, true)
+}
+
 /** Install the MutationObserver + delegated click handler and sweep existing
  *  blocks. Idempotent: safe to call from every vditor after() rebuild. */
 export function installCodeBlockEnhancer() {
@@ -231,36 +297,60 @@ export function installCodeBlockEnhancer() {
   if (!w.__vmdCodeBlockEnhancer) {
     w.__vmdCodeBlockEnhancer = true
 
-    // Delegated at document level so it survives vditor destroy/rebuild
-    // cycles (theme switches) without re-binding.
+    // Delegated at DOCUMENT CAPTURE level so it (a) survives vditor
+    // destroy/rebuild cycles (theme switches) without re-binding and
+    // (b) runs BEFORE vditor's own container-level click handlers: clicking
+    // the header bar or its buttons must not flip the block into vditor's
+    // plain-text editing mode, so those clicks are consumed with
+    // stopPropagation. Clicks elsewhere (code area, editing pre) fall
+    // through untouched.
     document.addEventListener('click', (e) => {
-      const btn = (e.target as HTMLElement | null)?.closest?.('.vmd-cb-btn')
-      if (!(btn instanceof HTMLElement)) return
-      const pre = btn.closest('pre')
-      if (!pre) return
+      const target = e.target as HTMLElement | null
 
-      if (btn.classList.contains('vmd-cb-wrap')) {
-        const on = pre.classList.toggle('vmd-cb--wrap')
-        btn.classList.toggle('vmd-cb-btn--on', on)
-        btn.title = t(on ? 'disableWrap' : 'enableWrap')
-        btn.setAttribute('aria-label', btn.title)
+      // Action buttons keep their own behavior and must NOT fold the block.
+      const btn = target?.closest?.('.vmd-cb-btn')
+      if (btn instanceof HTMLElement) {
+        e.stopPropagation()
+        const pre = btn.closest('pre')
+        if (!pre) return
+
+        if (btn.classList.contains('vmd-cb-wrap')) {
+          const on = pre.classList.toggle('vmd-cb--wrap')
+          btn.classList.toggle('vmd-cb-btn--on', on)
+          btn.title = t(on ? 'disableWrap' : 'enableWrap')
+          btn.setAttribute('aria-label', btn.title)
+          return
+        }
+
+        if (btn.classList.contains('vmd-cb-copy')) {
+          const code = pre.querySelector(':scope > code')
+          const text = code ? codeTextOf(code) : ''
+          const clip = (navigator as any).clipboard
+          if (clip && typeof clip.writeText === 'function') {
+            clip.writeText(text).then(
+              () => flashCopyState(btn, 'vmd-cb-btn--ok', t('copied')),
+              () => flashCopyState(btn, 'vmd-cb-btn--err', t('copyFailed'))
+            )
+          } else {
+            flashCopyState(btn, 'vmd-cb-btn--err', t('copyFailed'))
+          }
+        }
         return
       }
 
-      if (btn.classList.contains('vmd-cb-copy')) {
-        const code = pre.querySelector(':scope > code')
-        const text = code ? codeTextOf(code) : ''
-        const clip = (navigator as any).clipboard
-        if (clip && typeof clip.writeText === 'function') {
-          clip.writeText(text).then(
-            () => flashCopyState(btn, 'vmd-cb-btn--ok', t('copied')),
-            () => flashCopyState(btn, 'vmd-cb-btn--err', t('copyFailed'))
-          )
-        } else {
-          flashCopyState(btn, 'vmd-cb-btn--err', t('copyFailed'))
-        }
+      // Anywhere else on the header bar toggles collapse/expand. The click
+      // is consumed (see the capture note above) so vditor never sees it.
+      const header = target?.closest?.('.vmd-cb-header')
+      if (header instanceof HTMLElement) {
+        e.stopPropagation()
+        const pre = header.closest('pre')
+        if (!pre) return
+        toggleCollapse(pre, header)
       }
-    })
+    }, true)
+
+    // Keyboard activation lives in installHeaderKeyActivation() — see the
+    // registration-order note there.
 
     // Observe the whole body: vditor re-renders code blocks by replacing the
     // preview <pre> nodes (headers are lost with the old nodes), and rebuilds
