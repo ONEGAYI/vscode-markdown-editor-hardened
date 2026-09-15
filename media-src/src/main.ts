@@ -286,6 +286,13 @@ function initVditor(msg) {
     // every link shape — real <a> in WYSIWYG/preview and the IR `[data-type="a"]`
     // marker span — so vditor does not need to handle clicks at all.
     link: { isOpen: false },
+    // vditor 3.11.2 calls `options.customWysiwygToolbar(type, popover)` at ~14
+    // sites (blockquote / list / table / footnotes / toc popovers) with NO
+    // null guard, even though the callback is optional and we never set it —
+    // every popover open threw an uncaught TypeError and skipped
+    // setPopoverPosition(). The no-op restores the intended default: built-in
+    // popover buttons render and position normally, nothing is appended.
+    customWysiwygToolbar: () => {},
     // C3.8/C3.9: default to WYSIWYG mode when the user has no saved
     // preference. (Previously 'ir' — Instant Rendering — which is a
     // dual-pane source+preview while editing; visually noisy.) Users

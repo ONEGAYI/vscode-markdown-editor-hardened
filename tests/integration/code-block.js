@@ -275,6 +275,34 @@ async function testMode(mode, checks) {
   add('copy failure adds error state to button', copyBtn.classList.contains('vmd-cb-btn--err'));
   Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: realClip });
 
+  // Retry INSIDE the 1.5s window: the earlier flash's restore timer must not
+  // truncate the new feedback (title/class must stay consistent until the
+  // LATEST timer expires, then fully reset).
+  if (mode === 'wysiwyg') {
+    copied.length = 0;
+    copyBtn.click(); // success -> ok state (gen 1)
+    await sleep(30);
+    Object.defineProperty(window.navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: () => Promise.reject(new Error('denied')) },
+    });
+    await sleep(800); // still inside gen-1's window
+    copyBtn.click(); // failure -> err state (gen 2)
+    await sleep(30);
+    add('retry inside window: state switches to err with matching title',
+      copyBtn.classList.contains('vmd-cb-btn--err') &&
+      !copyBtn.classList.contains('vmd-cb-btn--ok') &&
+      copyBtn.title === 'Copy failed');
+    await sleep(2200); // let every pending timer fire
+    add('state fully resets after final window', (() => {
+      const w = window; // jsdom default en-US => t() resolves to en_US
+      return !copyBtn.classList.contains('vmd-cb-btn--err') &&
+        !copyBtn.classList.contains('vmd-cb-btn--ok') &&
+        copyBtn.title === 'Copy code';
+    })());
+    Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: realClip });
+  }
+
   // ── rebuild survival (theme change destroys + recreates vditor) ──
   window.dispatchEvent(new window.MessageEvent('message', {
     data: {
@@ -321,6 +349,10 @@ async function testMode(mode, checks) {
   }
 
   // No jsdom page-level errors (script crashes) may have slipped through.
+  if (pageErrors.length > 0) {
+    console.error('[code-block] pageErrors detail:');
+    for (const e of pageErrors) console.error('  -', e && e.message ? `${e.message}` : String(e).slice(0, 200));
+  }
   add(`no page errors (got ${pageErrors.length})`, pageErrors.length === 0);
 }
 

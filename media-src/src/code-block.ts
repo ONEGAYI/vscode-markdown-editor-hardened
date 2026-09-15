@@ -157,12 +157,19 @@ function codeTextOf(code: Element): string {
   return (source.textContent || '').replace(/\n$/, '')
 }
 
-/** Show a transient state (success check / error tint) on a copy button. */
+/** Show a transient state (success check / error tint) on a copy button.
+ *  A generation token guards the restore timer: retrying a copy inside the
+ *  1.5s window must not let the PREVIOUS flash's timer reset the title or
+ *  clear the new state early. */
 function flashCopyState(btn: HTMLElement, cls: string, label: string) {
+  const gen = (Number(btn.dataset.vmdCbFlash) || 0) + 1
+  btn.dataset.vmdCbFlash = String(gen)
+  btn.classList.remove('vmd-cb-btn--ok', 'vmd-cb-btn--err')
   btn.classList.add(cls)
   btn.title = label
   btn.setAttribute('aria-label', label)
   setTimeout(() => {
+    if (btn.dataset.vmdCbFlash !== String(gen)) return // superseded
     btn.classList.remove(cls)
     btn.title = t('copyCode')
     btn.setAttribute('aria-label', t('copyCode'))
