@@ -376,6 +376,20 @@ async function testMode(mode, checks) {
     add('unrelated "none" declarations do not retire the mirror', staysEditing);
     editPre.setAttribute('style', 'display: block;'); // restore the plain form
     await sleep(150);
+    // IME composition frames must paint ink IMMEDIATELY (not on the 60ms
+    // trailing debounce): during composition vditor takes its light path
+    // and never rebuilds the block, while the editing text is transparent —
+    // trailing-edge-only updates would hide the composed characters.
+    editPre.querySelector('code').textContent = '{ "组词": true }\n';
+    editPre.dispatchEvent(new window.InputEvent('input', { bubbles: true, isComposing: true }));
+    let composedVisible = false;
+    // 40ms window — deliberately shorter than the 60ms debounce so only the
+    // immediate path can satisfy this check.
+    for (let i = 0; i < 2; i++) { await sleep(20);
+      const ov = document.querySelector('body > .vmd-cb-edit-hl');
+      if (ov && ov.textContent.includes('组词')) { composedVisible = true; break; } }
+    add('IME composition frames mirror text immediately', composedVisible);
+    editPre.querySelector('code').textContent = '{ "edited": true }\n'; // restore for the scenarios below
     // vditor REPLACES the editing block in place on every keystroke — the
     // input handler must re-sync the fresh block (editing class + mirror).
     const fresh = block.cloneNode(true);

@@ -325,6 +325,11 @@ function positionEditOverlay(editPre: HTMLPreElement, overlay: HTMLElement) {
   overlay.style.left = r.left + 'px'
   overlay.style.top = r.top + 'px'
   overlay.style.width = r.width + 'px'
+  // Re-rendering the overlay's content (innerHTML/textContent) clamps its
+  // scrollLeft back to 0 — while editing a horizontally-scrolled long line,
+  // the mirror would jump to the line start on every render until the next
+  // scroll event. Re-sync it on every pin.
+  overlay.scrollLeft = editPre.scrollLeft
 }
 
 /** The editing state of one block: the class drives the shell-preserving
